@@ -63,10 +63,13 @@ public partial class MainWindow
 
         instanceLock = File.Open("companion.lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
         preferences = CompanionPreferences.Read();
+        quietHours = new CompanionQuietHours(preferences);
         if (CompanionNative.IsExternalForegroundCandidate(startupForeground))
             lastExternalForeground = startupForeground;
         brain = new CompanionBrain
         {
+            UseCloud = preferences.CloudSelected,
+            StopCloudOnBattery = preferences.StopCloudOnBattery,
             UseGpu = preferences.GpuEnabled,
             StopOnBattery = preferences.StopModelOnBattery,
             WeatherRegionCode = preferences.WeatherRegionCode
@@ -265,10 +268,43 @@ public partial class MainWindow
         });
     }
 
+    private CompanionQuietHours quietHours = null!;
+    private bool automaticRequestPending, automaticGenerationActive, automaticBubble;
+    private long automaticRequestVersion;
+    private void ToggleQuietHours()
+    {
+        if (quietHours.Active) quietHours.Resume();
+        else
+        {
+            quietHours.Start();
+            if (automaticRequestPending)
+            {
+                if (automaticRequestVersion == speechRequestVersion) speechRequestVersion++;
+                if (automaticGenerationActive) brain.CancelGeneration();
+                if (!weatherRequestPending) EndModelSpeech();
+            }
+            if (automaticBubble && !externalBubble) ClearCompanionModelReply();
+        }
+        nextSpeech = DateTime.UtcNow.Add(preferences.NextSpeechDelay(companionRandom));
+        SaveCompanion();
+    }
+    private void ApplyModelConfiguration()
+    {
+        speechRequestVersion++;
+        brain.Stop(); EndModelSpeech(); ClearCompanionModelReply();
+        brain.UseCloud = preferences.CloudSelected;
+        brain.StopCloudOnBattery = preferences.StopCloudOnBattery;
+        brain.RefreshModelAvailability();
+        nextWarmup = DateTime.MinValue;
+        nextSpeech = DateTime.UtcNow.Add(preferences.NextSpeechDelay(companionRandom));
+        ApplyCompanionPowerPolicy(); SaveCompanion();
+    }
+
     private void ApplyCompanionPowerPolicy()
     {
         if (brain == null || preferences == null) return;
         brain.StopOnBattery = preferences.StopModelOnBattery;
+        brain.StopCloudOnBattery = preferences.StopCloudOnBattery;
         if (!brain.CanRunOnCurrentPower)
         {
             brain.Stop();
@@ -406,6 +442,7 @@ public partial class MainWindow
         if (PuppetActive) return;
         externalBubble = false;
         bubbleIsModelReply = true;
+        automaticBubble = automaticRequestPending && !weatherRequestPending;
         bubbleUntil = DateTime.MaxValue;
         speech.Show(text, true);
     }
@@ -421,6 +458,7 @@ public partial class MainWindow
             return;
         externalBubble = false;
         bubbleIsModelReply = true;
+        automaticBubble = automaticRequestPending && !weatherRequestPending;
         bubbleUntil = DateTime.MaxValue;
         speech.ShowPartial(text);
     }
@@ -455,6 +493,7 @@ public partial class MainWindow
         if (PuppetActive) return;
         externalBubble = false;
         bubbleIsModelReply = false;
+        automaticBubble = false;
         bubbleUntil = DateTime.MaxValue;
         speech.Show(text, animate);
     }
@@ -469,6 +508,7 @@ public partial class MainWindow
     private async void CompanionTick(object? sender, EventArgs e)
     {
         var now = DateTime.UtcNow;
+        if (quietHours.Expire()) { nextSpeech = now.Add(preferences.NextSpeechDelay(companionRandom)); SaveCompanion(); }
         var foreground = CompanionNative.GetForegroundWindow();
         if (CompanionNative.IsExternalForegroundCandidate(foreground))
             lastExternalForeground = foreground;
@@ -617,10 +657,10 @@ public partial class MainWindow
             return;
         }
 
-        if (!ConsumeMcpSpeech()) await SpeechCountdownZeroAsync();
+        if (!ConsumeMcpSpeech() && !quietHours.Active) await SpeechCountdownZeroAsync();
     }
 
-    private async Task SpeechCountdownZeroAsync()
+    private async Task SpeechCountdownZeroAsync(bool automatic = true)
     {
         var foregroundHandle = speechForegroundOverride
             ?? CompanionNative.ResolveSpeechForeground(CompanionNative.GetForegroundWindow(), lastExternalForeground);
@@ -628,8 +668,11 @@ public partial class MainWindow
         if (PuppetActive || speechRequestPending || companionClosed || exitAnimation || modelInstaller != null || !preferences.ModelEnabled || !brain.ModelAvailable || !brain.CanRunOnCurrentPower)
             return;
 
+        if (automatic && quietHours.Active) return;
         speechRequestPending = true;
+        automaticRequestPending = automatic;
         long version = speechRequestVersion;
+        if (automatic) automaticRequestVersion = version;
         BeginModelSpeech();
         bool streamed = false;
         string text = "";
@@ -638,16 +681,16 @@ public partial class MainWindow
             // Both countdown and test use this gate. A warm-up or weather task
             // delays the request instead of silently discarding the test click.
             var deadline = DateTime.UtcNow.AddSeconds(100);
-            while ((brain.Busy || weatherRequestPending) && DateTime.UtcNow < deadline
+            while (version == speechRequestVersion && (brain.Busy || weatherRequestPending) && DateTime.UtcNow < deadline
                 && !companionClosed && !exitAnimation && !hiddenByUser && !fullscreenHidden
                 && preferences.ModelEnabled && brain.CanRunOnCurrentPower)
                 await Task.Delay(100);
-            if (brain.Busy || weatherRequestPending || companionClosed || exitAnimation || hiddenByUser || fullscreenHidden
+            if (version != speechRequestVersion || brain.Busy || weatherRequestPending || companionClosed || exitAnimation || hiddenByUser || fullscreenHidden
                 || !preferences.ModelEnabled || !brain.CanRunOnCurrentPower)
                 return;
-            version = speechRequestVersion;
             nextSpeech = DateTime.UtcNow.Add(preferences.NextSpeechDelay(companionRandom));
             BeginModelSpeech(); // A preceding weather request may have ended its own loading indicator.
+            automaticGenerationActive = automatic;
             text = await brain.Generate(preferences.PublicInfo, preferences.ForegroundEnabled, foregroundHandle, partial =>
             {
                 streamed = true;
@@ -657,20 +700,24 @@ public partial class MainWindow
         finally
         {
             speechRequestPending = false;
-            EndModelSpeech();
+            automaticRequestPending = false;
+            automaticGenerationActive = false;
+            if (!weatherRequestPending) EndModelSpeech();
         }
         if (version == speechRequestVersion && !companionClosed && !hiddenByUser && !fullscreenHidden && preferences.ModelEnabled && brain.CanRunOnCurrentPower && text.Length > 0)
         {
+            automaticRequestPending = automatic;
             if (streamed)
                 FinishCompanionPartial(text);
             else
                 ShowCompanionBubble(text);
+            automaticRequestPending = false;
         }
-        else if (streamed)
+        else if (streamed && version == speechRequestVersion)
         {
             ClearCompanionModelReply();
         }
-        // Empty/failed generation is silent for automatic speech and tests alike.
+        if (!automatic && version == speechRequestVersion && text.Length == 0 && !companionClosed && !hiddenByUser && !fullscreenHidden) ShowCompanionNotice(brain.Status);
     }
 
     private void BuildCompanionTray()
@@ -687,6 +734,8 @@ public partial class MainWindow
         menu.Items.Add("关闭桌宠", null, (_, _) => Dispatcher.Invoke(() => base.Close()));
         string[] icons = ["\uE7F4", "\uE713", "\uE706", "\uE8F2", "\uE8BB"];
         for (int index = 0; index < menu.Items.Count; index++) menu.Items[index].Tag = icons[index];
+        var quietItem = menu.Items.Add(quietHours.MenuLabel, null, (_, _) => Dispatcher.Invoke(ToggleQuietHours));
+        menu.Opening += (_, _) => quietItem.Text = quietHours.MenuLabel;
         using var sourceIcon = new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "BigBlueFish.ico"));
         notifyIcon = new CompanionTrayIcon
         {

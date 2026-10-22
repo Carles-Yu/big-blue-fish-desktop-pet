@@ -15,6 +15,9 @@ internal sealed partial class LinuxPetWindow : Window
     internal readonly CompanionPreferences Preferences = CompanionPreferences.Read();
     readonly CompanionAnimationPolicy policy = CompanionAnimationPolicy.Load(Path.Combine(AppContext.BaseDirectory, "assets/fish"));
     readonly CompanionBrain brain;
+    readonly CompanionQuietHours quietHours;
+    bool autoGenerating, autoGenerationActive, autoBubble;
+    long autoRequestVersion;
     readonly Random random = new();
     readonly Image sprite = new() { Stretch = Stretch.Fill };
     readonly LinuxVideoPlayer player;
@@ -50,7 +53,8 @@ internal sealed partial class LinuxPetWindow : Window
     {
         mutex = new Mutex(true, "BigBlueFish.Linux." + Environment.UserName, out var first);
         if (!first) Environment.Exit(0);
-        brain = new() { UseGpu = Preferences.GpuEnabled, StopOnBattery = Preferences.StopModelOnBattery, WeatherRegionCode = Preferences.WeatherRegionCode };
+        quietHours = new CompanionQuietHours(Preferences);
+        brain = new() { UseCloud = Preferences.CloudSelected, StopCloudOnBattery = Preferences.StopCloudOnBattery, UseGpu = Preferences.GpuEnabled, StopOnBattery = Preferences.StopModelOnBattery, WeatherRegionCode = Preferences.WeatherRegionCode };
         Title = "蓝色大肥鱼"; WindowDecorations = WindowDecorations.None; ShowInTaskbar = false; ShowActivated = false;
         Topmost = true; CanResize = false; Background = Brushes.Transparent; TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
         var canvas = new Grid(); canvas.Children.Add(sprite); canvas.Children.Add(loading); Content = canvas;
@@ -74,7 +78,7 @@ internal sealed partial class LinuxPetWindow : Window
             if (Puppet) Play(policy.Find("待机呼吸休闲"), "PuppetIdle");
             else { Play(policy.Find("女仆屈膝礼仪"), "Startup"); Welcome(); }
             InitializeMcp(); InitializeTray(); timer.Start();
-            if (!File.Exists("model-selection.json") && !brain.ModelAvailable && !App.Args.Contains("--test-mode")) await InstallModel();
+            if (!Preferences.CloudSelected && !File.Exists("model-selection.json") && !brain.ModelAvailable && !App.Args.Contains("--test-mode")) await InstallModel();
             if (Preferences.CheckUpdatesOnStartup && !App.Args.Contains("--test-mode")) _ = CheckUpdates(false);
         };
         PointerPressed += (_, e) => {
@@ -185,18 +189,21 @@ internal sealed partial class LinuxPetWindow : Window
     void ShowText(string text, bool external, bool immediate = false, bool fromModel = false)
     {
         greetingNoticeActive = false;
+        autoBubble = fromModel && autoGenerating;
         fullText = text; textBoundaries = StringInfo.ParseCombiningCharacters(text); externalSpeech = external; modelReply = fromModel;
         typing = !immediate && textBoundaries.Length > 1; typingClock.Restart(); bubbleUntil = DateTime.MaxValue;
         bubbleText.Text = typing ? text[..textBoundaries[1]] : text;
         MoveBubble(); if (!hidden && !fullscreenHidden) bubbleWindow.Show(); if (!typing && phase is not ("Startup" or "Exit")) ResetDwell();
     }
-    void Partial(string text, long expectedVersion)
+    void Partial(string text, long expectedVersion, bool automatic)
     {
-        Dispatcher.UIThread.Post(() => {
+        void Apply()
+        {
             if (expectedVersion != speechVersion || Puppet || closed || hidden || fullscreenHidden || !Preferences.ModelEnabled || !brain.CanRunOnCurrentPower) return;
-            greetingNoticeActive = false; streamed = true; fullText = text; typing = false; externalSpeech = false; modelReply = true; bubbleText.Text = text; bubbleUntil = DateTime.MaxValue;
+            autoBubble = automatic; greetingNoticeActive = false; streamed = true; fullText = text; typing = false; externalSpeech = false; modelReply = true; bubbleText.Text = text; bubbleUntil = DateTime.MaxValue;
             MoveBubble(); bubbleWindow.Show();
-        });
+        }
+        if (Dispatcher.UIThread.CheckAccess()) Apply(); else Dispatcher.UIThread.Post(Apply);
     }
     void ResetDwell() { int duration = CompanionPreferences.BubbleDurations[Preferences.BubbleDurationIndex]; bubbleUntil = duration == 0 ? DateTime.MaxValue : DateTime.UtcNow.AddSeconds(duration); }
     void MoveBubble()
@@ -219,6 +226,7 @@ internal sealed partial class LinuxPetWindow : Window
         if (closed || phase == "Exit") return;
         await TestCommands(); if (closed || phase == "Exit") return;
         var now = DateTime.UtcNow;
+        if (quietHours.Expire()) { nextSpeech = now.Add(Preferences.NextSpeechDelay(random)); Save(); }
         lastForeground = CompanionNative.ResolveForeground(CompanionNative.GetForegroundWindow(), lastForeground);
         if (Preferences.PublicInfo) brain.RefreshWeather();
         if (!brain.CanRunOnCurrentPower) {
@@ -242,27 +250,40 @@ internal sealed partial class LinuxPetWindow : Window
         if (nextExternalText == null && (generating || brain.Busy || !Preferences.ModelEnabled || !brain.ModelAvailable || !brain.CanRunOnCurrentPower)) return;
         if (CompanionNative.IdleSeconds < 8 || CompanionNative.IdleSeconds > 600) { nextSpeech = now.AddSeconds(30); return; }
         if (nextExternalText != null) { string text = nextExternalText; nextExternalText = null; SayExternal(text); nextSpeech = now.Add(Preferences.NextSpeechDelay(random)); }
-        else await Speak(false);
+        else if (!quietHours.Active) await Speak(false, true);
     }
-    async Task Speak(bool weather)
+    async Task Speak(bool weather, bool automatic = false)
     {
         if (Puppet || generating || closed || phase == "Exit" || modelInstalling) return;
-        if (!brain.ModelAvailable) { await InstallModel(); return; }
-        if (!Preferences.ModelEnabled) { ShowText("主人，请先在设置里启用本地大模型哦~", false); return; }
-        if (!brain.CanRunOnCurrentPower) { ShowText("主人，当前设置为笔记本离电暂停模型，可以在设置里调节哦。", false); return; }
-        generating = true; long version = ++speechVersion; streamed = false; loading.IsVisible = true;
+        if (automatic && quietHours.Active) return;
+        if (!brain.ModelAvailable) { if (brain.UseCloud) { if (!automatic) ShowText("请先在设置中配置云端接口和 API Key。", false); } else if (!automatic) await InstallModel(); return; }
+        if (!Preferences.ModelEnabled) { ShowText("主人，请先在设置里启用 AI 陪伴哦~", false); return; }
+        if (!brain.CanRunOnCurrentPower) { ShowText(brain.UseCloud ? brain.PowerPauseReason : "主人，当前设置为笔记本离电暂停模型，可以在设置里调节哦。", false); return; }
+        generating = true; autoGenerating = automatic; long version = ++speechVersion; if (automatic) autoRequestVersion = version; streamed = false; loading.IsVisible = true;
         try
         {
             var until = DateTime.UtcNow.AddSeconds(100);
             while (brain.Busy && DateTime.UtcNow < until && version == speechVersion) await Task.Delay(100);
             if (brain.Busy || version != speechVersion || Puppet || hidden || fullscreenHidden) return;
             nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random));
-            var text = weather ? await brain.GenerateWeather(p => Partial(p, version)) : await brain.Generate(Preferences.PublicInfo, Preferences.ForegroundEnabled, lastForeground, p => Partial(p, version));
+            autoGenerationActive = automatic;
+            var text = weather ? await brain.GenerateWeather(p => Partial(p, version, automatic)) : await brain.Generate(Preferences.PublicInfo, Preferences.ForegroundEnabled, lastForeground, p => Partial(p, version, automatic));
             if (version != speechVersion || Puppet || hidden || fullscreenHidden || closed || !Preferences.ModelEnabled || !brain.CanRunOnCurrentPower) return;
             if (text.Length > 0) { if (streamed) { fullText = text; bubbleText.Text = text; ResetDwell(); } else ShowText(text, false, fromModel: true); }
-            else if (streamed && !externalSpeech) bubbleWindow.Hide();
+            else { if (streamed && !externalSpeech) bubbleWindow.Hide(); if (!automatic) ShowText(brain.Status, false); }
         }
-        finally { generating = false; loading.IsVisible = false; }
+        finally { generating = false; autoGenerating = false; autoGenerationActive = false; loading.IsVisible = false; }
+    }
+    void ToggleQuietHours()
+    {
+        if (quietHours.Active) quietHours.Resume();
+        else
+        {
+            quietHours.Start();
+            if (autoGenerating) { if (autoRequestVersion == speechVersion) speechVersion++; if (autoGenerationActive) brain.CancelGeneration(); loading.IsVisible = false; }
+            if (autoBubble && !externalSpeech) { typing = false; bubbleWindow.Hide(); }
+        }
+        nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random)); Save();
     }
     void SayExternal(string text) { speechVersion++; brain.CancelGeneration(); loading.IsVisible = false; ShowText(text, true); }
     void OpenMenu()
@@ -270,7 +291,7 @@ internal sealed partial class LinuxPetWindow : Window
         var menu = new ContextMenu();
         MenuItem Item(string title, Action action, bool available = true) { var item = new MenuItem { Header = title, IsEnabled = available }; item.Click += (_, _) => action(); return item; }
         menu.ItemsSource = new[] { Item("设置", OpenSettings), Item("天气", async () => await Speak(true), !Puppet), Item("吐字测试", async () => await Speak(false), !Puppet),
-            Item(hidden ? "显示桌宠" : "隐藏桌宠", () => { if (hidden) { hidden = false; Show(); Clamp(); } else { hidden = true; Hide(); bubbleWindow.Hide(); speechVersion++; brain.CancelGeneration(); } }), Item("关闭桌宠", Close) };
+            Item(quietHours.MenuLabel, ToggleQuietHours), Item(hidden ? "显示桌宠" : "隐藏桌宠", () => { if (hidden) { hidden = false; Show(); Clamp(); } else { hidden = true; Hide(); bubbleWindow.Hide(); speechVersion++; brain.CancelGeneration(); } }), Item("关闭桌宠", Close) };
         ContextMenu = menu; menu.Open(this);
     }
     void CloseImmediately() { exitReady = true; Close(); }

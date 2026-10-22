@@ -202,7 +202,7 @@ internal static class Program
         }
         string sandbox = Path.GetFullPath(args[0]); Directory.CreateDirectory(sandbox); Environment.CurrentDirectory = sandbox;
         File.Copy(Path.Combine(AppContext.BaseDirectory, "BigBlueFish.ico"), Path.Combine(sandbox, "BigBlueFish.ico"), true);
-        File.WriteAllText("preferences.json", "{\"ModelEnabled\":false,\"CheckUpdatesOnStartup\":false,\"PublicInfo\":false}");
+        File.WriteAllText("preferences.json", "{\"ModelMode\":\"Local\",\"HideOnFullscreen\":false,\"ModelEnabled\":false,\"CheckUpdatesOnStartup\":false,\"PublicInfo\":false}");
         App.Args = ["--test-mode"]; var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown }; Environment.CurrentDirectory = sandbox;
         try
         {

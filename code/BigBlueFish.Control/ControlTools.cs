@@ -20,11 +20,11 @@ public static class ControlTools
         "BubbleDurationIndex", "AnimationIntervalSeconds", "BreakfastHour", "LunchHour", "DinnerHour", "Left", "Top", "LastBrushDate", "StartupEnabled", "PuppetMode", "McpChatEnabled"];
     private const string SettingsInput = """
         {"settings":{"type":"object","additionalProperties":false,"description":"按需提供字段；省略的字段保留。字段名区分大小写。McpEnabled 只读。成功后读取实际值；位置可能因工作区限制调整。","properties":{
-          "ModelEnabled":{"type":"boolean","description":"启用内置模型；不限制外部 say。"},
+          "ModelEnabled":{"type":"boolean","description":"启用 AI 陪伴，使用用户所选本地或云端模型；不限制外部 say。"},
           "GpuEnabled":{"type":"boolean","description":"本地推理使用 GPU；切换会停止当前模型任务。"},
           "PublicInfo":{"type":"boolean","description":"内置天气和科技新闻。"},
           "ForegroundEnabled":{"type":"boolean","description":"内置模型是否读屏；不是 MCP 截图的权限开关。"},
-          "StopModelOnBattery":{"type":"boolean","description":"离电时暂停并卸载内置模型；不限制外部文字。"},
+          "StopModelOnBattery":{"type":"boolean","description":"离电时暂停并卸载本地模型；不限制云端调用或外部文字。"},
           "HideOnFullscreen":{"type":"boolean","description":"外部全屏时隐藏桌宠；不限制 MCP 截图。"},
           "CheckUpdatesOnStartup":{"type":"boolean","description":"启动时检查更新。"},
           "WeatherRegionCode":{"type":"string","pattern":"^[0-9]{6}$","description":"内置地区表中存在的县区代码，如340104；不是城市名、省级或市级代码。"},

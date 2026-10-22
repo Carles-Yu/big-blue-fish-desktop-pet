@@ -36,6 +36,7 @@ internal static class Program
         if (args.Length > 0 && args[0] == "--fake-runner") return await FakeRunner(int.Parse(args[1]), args[2], args.Length < 4 || args[3] == "gpu");
         try
         {
+            if (args[0] == "--cloud-quiet") return await CloudQuietVerification.Run(args[1]);
             if (args[0] == "--performance-export") return PerformanceVerification.Export(args[1]);
             if (args[0] == "--latency-screen") return await LatencyVerification.Run(args[1]);
             if (args[0] == "--latency-fixture") return await LatencyVerification.Fixture(args[1]);

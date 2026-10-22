@@ -1,5 +1,7 @@
+using BigBlueFish.Deployment;
 using Microsoft.Win32;
 using System;
+using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
@@ -117,18 +119,36 @@ public partial class MainWindow
             p.Children.Add(c);
         }
 
-        Toggle("启用本地大模型", preferences.ModelEnabled, v =>
+        Toggle("启用 AI 陪伴", preferences.ModelEnabled, v =>
         {
             preferences.ModelEnabled = v;
             if (!v)
-                brain.Stop();
+                ApplyModelConfiguration();
             else
             {
                 nextWarmup = DateTime.MinValue;
                 nextSpeech = DateTime.UtcNow.AddSeconds(20);
             }
         });
-        Toggle("拔电时暂停并卸载模型", preferences.StopModelOnBattery, v =>
+        p.Children.Add(new TextBlock
+        {
+            Text = "请明确选择本地或云端模型；保存 Key 不会切换模式。",
+            Foreground = Brushes.SlateGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 6)
+        });
+        var mode = new ComboBox { ItemsSource = new[] { "本地模型", "云端模型" }, SelectedIndex = preferences.CloudSelected ? 1 : 0, Margin = new Thickness(0, 6, 0, 6) };
+        System.Windows.Automation.AutomationProperties.SetName(mode, "模型模式");
+        p.Children.Add(mode);
+        var screenNotice = new TextBlock { Text = CompanionCloud.ScreenNotice, TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray, Visibility = preferences.CloudSelected ? Visibility.Visible : Visibility.Collapsed };
+        p.Children.Add(screenNotice);
+        mode.SelectionChanged += (_, _) => {
+            preferences.ModelMode = mode.SelectedIndex == 1 ? "Cloud" : "Local";
+            screenNotice.Visibility = preferences.CloudSelected ? Visibility.Visible : Visibility.Collapsed;
+            ApplyModelConfiguration();
+        };
+        Toggle("电池供电时暂停云端调用", preferences.StopCloudOnBattery, v => { preferences.StopCloudOnBattery = v; ApplyCompanionPowerPolicy(); });
+        Toggle("拔电时暂停并卸载本地模型", preferences.StopModelOnBattery, v =>
         {
             preferences.StopModelOnBattery = v;
             ApplyCompanionPowerPolicy();
@@ -154,7 +174,7 @@ public partial class MainWindow
         Toggle("启动时检查更新", preferences.CheckUpdatesOnStartup, v => preferences.CheckUpdatesOnStartup = v);
         p = pages[1];
         Toggle("自动获取天气和科技新闻", preferences.PublicInfo, v => preferences.PublicInfo = v);
-        Toggle("感知当前应用（仅在本机处理）", preferences.ForegroundEnabled, v => preferences.ForegroundEnabled = v);
+        Toggle("感知当前应用（云端模式会发送 OCR 文字）", preferences.ForegroundEnabled, v => { preferences.ForegroundEnabled = v; ApplyModelConfiguration(); });
         AddCompanionRegionSelectors(p);
         p = pages[0];
         var label = new TextBlock
@@ -288,12 +308,17 @@ public partial class MainWindow
         };
         void UpdateStatus()
         {
-            bool available = brain.ModelAvailable;
-            installModel.Visibility = available ? Visibility.Collapsed : Visibility.Visible;
-            status.Text = (CompanionNative.OnAC ? "已插电" :
-                preferences.StopModelOnBattery ? "电池供电 · 已按设置暂停模型" : "电池供电 · 允许模型运行")
-                + "\n" + (available ? brain.Status : "尚未安装模型");
+            bool local = ModelStore.Resolve(Environment.CurrentDirectory) != null;
+            var cloud = CompanionCloud.TryLoad();
+            installModel.Visibility = local ? Visibility.Collapsed : Visibility.Visible;
+            string detail = preferences.CloudSelected
+                ? "云端模型：" + (cloud?.Model ?? "未配置 Key") + "\n" + brain.CloudResult(cloud)
+                : "本地模型：" + (local ? brain.Status : "尚未安装");
+            status.Text = (brain.CanRunOnCurrentPower ? (CompanionNative.OnAC ? "已插电" : "电池供电 · 允许当前模式运行") : brain.PowerPauseReason)
+                + "\n" + detail + "\n运行状态：" + brain.Status;
+
         }
+        AddCloudSettings(p, UpdateStatus);
         timer.Tick += (_, _) => UpdateStatus();
         UpdateStatus();
         timer.Start();
@@ -338,6 +363,83 @@ public partial class MainWindow
             if (companionSettings != w || w.Content != shell) return;
             for (int i = 0; i < views.Length; i++) views[i].ScrollToVerticalOffset(scrollOffsets[i]);
         }));
+    }
+
+    private void AddCloudSettings(StackPanel panel, Action refreshStatus)
+    {
+        var editor = CompanionCloud.LoadEditor();
+        panel.Children.Add(new TextBlock { Text = "线上接口", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 18, 0, 6) });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "选择云端模式后使用这里的接口。Key 保存在本机，不会从 MCP 设置里读出。测试连接会发送固定短句并产生少量调用费用，不读取屏幕。",
+            Foreground = Brushes.SlateGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8)
+        });
+        var sources = new TextBlock { Text = editor.Sources + "\n" + editor.Warning, TextWrapping = TextWrapping.Wrap, Foreground = Brushes.SlateGray };
+        panel.Children.Add(sources);
+        TextBox Input(string name, string value)
+        {
+            panel.Children.Add(new TextBlock { Text = name, Margin = new Thickness(0, 6, 0, 0) });
+            var box = new TextBox
+            {
+                Text = value,
+                MinHeight = 36,
+                Padding = new Thickness(8, 6, 8, 6),
+                Margin = new Thickness(0, 4, 0, 2),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(220, 229, 242)),
+                Background = new SolidColorBrush(Color.FromRgb(247, 249, 253))
+            };
+            System.Windows.Automation.AutomationProperties.SetName(box, name);
+            panel.Children.Add(box);
+            return box;
+        }
+        var baseUrl = Input("接口地址", editor.BaseUrl);
+        var model = Input("模型", editor.Model);
+        panel.Children.Add(new TextBlock { Text = "API Key", Margin = new Thickness(0, 6, 0, 0) });
+        var key = new PasswordBox
+        {
+            Password = editor.ApiKey,
+            MinHeight = 36,
+            Padding = new Thickness(8, 6, 8, 6),
+            Margin = new Thickness(0, 4, 0, 2),
+            BorderBrush = new SolidColorBrush(Color.FromRgb(220, 229, 242)),
+            Background = new SolidColorBrush(Color.FromRgb(247, 249, 253))
+        };
+        System.Windows.Automation.AutomationProperties.SetName(key, "API Key");
+        panel.Children.Add(key);
+        if (editor.EnvironmentOverridesKey)
+            panel.Children.Add(new TextBlock { Text = "检测到环境变量 DEEPSEEK_API_KEY，它会盖过这里保存的 Key。", Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) });
+        var save = new Button { Content = "保存线上接口", Margin = new Thickness(0, 10, 0, 4), HorizontalAlignment = HorizontalAlignment.Left };
+        var message = new TextBlock { Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap };
+        save.Click += (_, _) =>
+        {
+            try
+            {
+                CompanionCloud.SaveUser(baseUrl.Text, model.Text, key.Password);
+                ApplyModelConfiguration();
+                var effective = CompanionCloud.LoadEditor();
+                baseUrl.Text = effective.BaseUrl; model.Text = effective.Model; key.Password = effective.ApiKey;
+                sources.Text = effective.Sources + "\n" + effective.Warning;
+                refreshStatus();
+                message.Text = string.IsNullOrWhiteSpace(key.Password)
+                    ? "已保存。没有有效 Key 时，云端模式不可用。"
+                    : "已保存，生效配置见上方；模型模式保持不变。";
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                message.Text = error.Message;
+            }
+        };
+        panel.Children.Add(save);
+        panel.Children.Add(message);
+        var test = new Button { Content = "测试已保存的云端连接", Margin = new Thickness(0, 6, 0, 4), HorizontalAlignment = HorizontalAlignment.Left };
+        test.Click += async (_, _) => {
+            test.IsEnabled = false;
+            try { message.Text = "正在测试已保存的生效配置…"; message.Text = await brain.TestCloudConnection(); refreshStatus(); }
+            finally { test.IsEnabled = true; }
+        };
+        panel.Children.Add(test);
     }
 
     private void ActivateCompanionSettings(Window window)

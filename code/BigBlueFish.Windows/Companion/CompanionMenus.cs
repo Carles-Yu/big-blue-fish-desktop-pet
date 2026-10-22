@@ -40,22 +40,26 @@ public partial class MainWindow
         hide.Icon = Icon("\uE8A7");
         hide.Click += (_, _) => { companionContextMenu.IsOpen = false; HideCompanion(); };
         companionContextMenu.Items.Add(hide);
+        var quiet = new MenuItem { Header = quietHours.MenuLabel };
+        quiet.Click += (_, _) => { companionContextMenu.IsOpen = false; ToggleQuietHours(); };
+        companionContextMenu.Items.Add(quiet);
+        companionContextMenu.Opened += (_, _) => quiet.Header = quietHours.MenuLabel;
         companionContextMenu.Opened += (_, _) => { weather.IsEnabled = !PuppetActive; test.IsEnabled = !PuppetActive; };
     }
 
     private async Task SpeakCompanionWeather()
     {
         if (PuppetActive || weatherRequestPending || companionClosed || exitAnimation) return;
-        if (!brain.ModelAvailable) { OpenModelInstaller(); return; }
+        if (!brain.ModelAvailable) { if (brain.UseCloud) ShowCompanionNotice("请先在设置中配置云端接口和 API Key。"); else OpenModelInstaller(); return; }
         if (hiddenByUser) RestoreCompanion();
         if (!preferences.ModelEnabled)
         {
-            ShowCompanionNotice("主人，请先在设置里启用本地大模型，再来查看天气吧～");
+            ShowCompanionNotice("主人，请先在设置里启用 AI 陪伴，再来查看天气吧～");
             return;
         }
         if (!brain.CanRunOnCurrentPower)
         {
-            ShowCompanionNotice(BatteryPauseNotice, true);
+            ShowCompanionNotice(brain.UseCloud ? brain.PowerPauseReason : BatteryPauseNotice, true);
             return;
         }
         weatherRequestPending = true;
@@ -106,13 +110,19 @@ public partial class MainWindow
         }
         if (!brain.CanRunOnCurrentPower)
         {
-            ShowCompanionNotice(BatteryPauseNotice, true);
+            ShowCompanionNotice(brain.UseCloud ? brain.PowerPauseReason : BatteryPauseNotice, true);
+            return Task.CompletedTask;
+        }
+        if (!brain.ModelAvailable)
+        {
+            if (brain.UseCloud) ShowCompanionNotice("请先在设置中配置云端接口和 API Key，并测试连接。");
+            else OpenModelInstaller();
             return Task.CompletedTask;
         }
         // A test directly enters the same single handler used when the ordinary
         // speech countdown reaches zero.
         speechForegroundOverride = CompanionNative.ResolveSpeechForeground(CompanionNative.GetForegroundWindow(), lastExternalForeground);
-        return SpeechCountdownZeroAsync();
+        return SpeechCountdownZeroAsync(false);
     }
 
     private void AddCompanionRegionSelectors(Panel panel)

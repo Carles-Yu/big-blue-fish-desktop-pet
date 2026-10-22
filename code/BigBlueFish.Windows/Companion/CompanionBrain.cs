@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Net.Sockets;
 using System.Text;
@@ -24,6 +25,14 @@ internal sealed class CompanionBrain : IDisposable
     {
         Timeout = TimeSpan.FromSeconds(12)
     };
+    private readonly HttpClient cloudHttp;
+    private readonly Func<CompanionCloud.Settings> cloudSettings;
+    private CompanionCloud.Settings? lastCloudSettings;
+    internal string LastCloudResult { get; private set; } = "尚未验证";
+    internal bool UseCloud { get; set; }
+    internal bool StopCloudOnBattery { get; set; }
+    internal string PowerPauseReason => UseCloud ? "电池供电 · 已暂停云端调用" : "电池供电 · 已暂停本地模型";
+    internal string CloudResult(CompanionCloud.Settings? settings) => settings != null && settings == lastCloudSettings ? LastCloudResult : "尚未验证";
     private Process? runner;
     private bool runnerReady;
     private readonly Func<ProcessStartInfo, Process?> startRunner;
@@ -33,6 +42,7 @@ internal sealed class CompanionBrain : IDisposable
     private readonly CompanionJob job = new();
     private int port;
     private CancellationTokenSource? active;
+    private bool cancelledByUser;
     private readonly CompanionWeather weather;
     private CompanionNews.Item[] newsItems = Array.Empty<CompanionNews.Item>();
     private DateTime newsExpires = DateTime.MinValue;
@@ -43,7 +53,7 @@ internal sealed class CompanionBrain : IDisposable
     internal bool UseGpu { get; set; } = true;
     internal bool StopOnBattery { get; set; } = true;
     internal string WeatherRegionCode { get; set; } = CompanionRegions.DefaultCode;
-    internal bool CanRunOnCurrentPower => !StopOnBattery || CompanionNative.OnAC;
+    internal bool CanRunOnCurrentPower => !(UseCloud ? StopCloudOnBattery : StopOnBattery) || CompanionNative.OnAC;
     private DateTime nextModelCheck;
     private bool modelAvailable;
     internal bool ModelAvailable
@@ -52,7 +62,12 @@ internal sealed class CompanionBrain : IDisposable
         {
             if (DateTime.UtcNow >= nextModelCheck)
             {
-                modelAvailable = BigBlueFish.Deployment.ModelStore.Resolve(Environment.CurrentDirectory) != null;
+                if (UseCloud)
+                {
+                    try { modelAvailable = cloudSettings() != null; }
+                    catch (IOException) { modelAvailable = false; }
+                }
+                else modelAvailable = BigBlueFish.Deployment.ModelStore.Resolve(Environment.CurrentDirectory) != null;
                 nextModelCheck = DateTime.UtcNow.AddSeconds(2);
             }
             return modelAvailable;
@@ -79,8 +94,10 @@ internal sealed class CompanionBrain : IDisposable
         TimeSpan.FromSeconds(60)) { }
 
     // The verification harness substitutes a real child process, not model output in the app.
-    internal CompanionBrain(Func<ProcessStartInfo, Process?> startRunner, TimeSpan runnerLoadTimeout, HttpClient? weatherClient = null, string? weatherCachePath = null, Func<double>? newsRoll = null, Func<CancellationToken, Task<string>>? gpuDevices = null)
+    internal CompanionBrain(Func<ProcessStartInfo, Process?> startRunner, TimeSpan runnerLoadTimeout, HttpClient? weatherClient = null, string? weatherCachePath = null, Func<double>? newsRoll = null, Func<CancellationToken, Task<string>>? gpuDevices = null, HttpClient? cloudClient = null, Func<CompanionCloud.Settings>? cloudSettings = null)
     {
+        cloudHttp = cloudClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(100) };
+        this.cloudSettings = cloudSettings ?? CompanionCloud.RequireSettings;
         this.startRunner = startRunner;
         this.gpuDevices = gpuDevices ?? ReadGpuDevices;
         this.runnerLoadTimeout = runnerLoadTimeout;
@@ -394,19 +411,23 @@ internal sealed class CompanionBrain : IDisposable
         if (Busy || !CanRunOnCurrentPower)
             return "";
         Busy = true;
+        cancelledByUser = false;
         active = new CancellationTokenSource(TimeSpan.FromSeconds(100));
         var token = active.Token;
         try
         {
+            var cloudConfig = UseCloud ? cloudSettings() : null;
+            bool cloud = cloudConfig != null;
             Status = "正在获取所选地区天气";
             var context = await weather.Context(WeatherRegionCode, token);
-            await EnsureRunner(token);
+            if (!cloud)
+                await EnsureRunner(token);
             Status = "正在生成天气播报";
-            var text = await Complete(WeatherPersona, WeatherRequest(context), CompanionDialogue.Temperature, token, onPartial: onPartial);
-            Status = ReadyStatus("本地模型就绪");
+            var text = await Complete(WeatherPersona, WeatherRequest(context), CompanionDialogue.Temperature, token, cloudConfig, onPartial: onPartial);
+            Status = cloud ? "云端模型就绪" : ReadyStatus("本地模型就绪");
             return CanRunOnCurrentPower ? text : "";
         }
-        catch (OperationCanceledException) { Status = "天气播报已取消"; return ""; }
+        catch (OperationCanceledException) { Status = cancelledByUser ? "天气播报已取消" : "天气播报超时，请稍后重试"; return ""; }
         catch (Exception e)
         {
             Status = e is IOException ? e.Message : "暂时无法获取或播报天气，请稍后重试";
@@ -421,46 +442,87 @@ internal sealed class CompanionBrain : IDisposable
         }
     }
 
-    private async Task<string> Complete(string persona, string request, double temperature, CancellationToken token, CompanionWindowImage? image = null, Action<string>? onPartial = null)
+    private async Task<string> Complete(string persona, string request, double temperature, CancellationToken token, CompanionCloud.Settings? cloud, CompanionWindowImage? image = null, Action<string>? onPartial = null)
     {
+        if (cloud != null) { lastCloudSettings = cloud; LastCloudResult = "请求中"; }
         try
         {
-            return await CompleteRequest(persona, request, temperature, token, image, onPartial);
+            var result = await CompleteRequest(persona, request, temperature, token, cloud, image, onPartial);
+            token.ThrowIfCancellationRequested();
+            if (cloud != null)
+            {
+                if (string.IsNullOrWhiteSpace(result)) throw new CloudResponseException("云端响应内容为空");
+                LastCloudResult = "最近请求成功";
+            }
+            return result;
+        }
+        catch (Exception error) when (cloud != null)
+        {
+            LastCloudResult = error switch
+            {
+                OperationCanceledException => cancelledByUser ? "云端请求已取消" : "云端请求超时",
+                HttpRequestException => "云端连接失败，请检查网络和接口地址",
+                JsonException or InvalidOperationException or KeyNotFoundException or IndexOutOfRangeException => "云端响应格式错误",
+                CloudResponseException => error.Message,
+                IOException => "云端连接中断，请检查网络后重试",
+                _ => "云端请求失败，请检查配置"
+            };
+            // Never expose provider response bodies, URLs or credentials in error strings.
+            throw new IOException(LastCloudResult);
         }
         catch (Exception error) when (error is HttpRequestException or IOException)
         {
-            StopRunner();
-            throw;
+            StopRunner(); throw;
         }
     }
 
-    private async Task<string> CompleteRequest(string persona, string request, double temperature, CancellationToken token, CompanionWindowImage? image = null, Action<string>? onPartial = null)
+    private async Task<string> CompleteRequest(string persona, string request, double temperature, CancellationToken token, CompanionCloud.Settings? cloud, CompanionWindowImage? image = null, Action<string>? onPartial = null)
     {
-        var messages = BuildMessages(persona, request, image);
+        var messages = BuildMessages(persona, request, cloud == null ? image : null);
         LastTimings = null;
-        var payload = new
-        {
-            model = "local",
-            messages,
-            temperature,
-            top_p = .9,
-            max_tokens = persona == NewsPersona ? 160 : persona == WeatherPersona ? 220 : 180,
-            stream = StreamingResponses,
-            cache_prompt = true,
-            stream_options = new { include_usage = true },
-            chat_template_kwargs = new { enable_thinking = false }
-        };
-        if (App.Args.Contains("--test-mode"))
+        int maxTokens = persona == NewsPersona ? 160 : persona == WeatherPersona ? 220 : 180;
+        object payload = cloud == null
+            ? new
+            {
+                model = "local",
+                messages,
+                temperature,
+                top_p = .9,
+                max_tokens = maxTokens,
+                stream = StreamingResponses,
+                cache_prompt = true,
+                stream_options = new { include_usage = true },
+                chat_template_kwargs = new { enable_thinking = false }
+            }
+            : new
+            {
+                model = cloud.Model,
+                messages,
+                temperature,
+                top_p = .9,
+                max_tokens = maxTokens,
+                stream = StreamingResponses,
+                thinking = new { type = "disabled" }
+            };
+        if (cloud == null && App.Args.Contains("--test-mode"))
         {
             try { File.WriteAllText(Path.Combine(AppContext.BaseDirectory, "model-request.json"), JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true })); }
             catch { }
         }
-        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{port}/v1/chat/completions")
+        using var requestMessage = new HttpRequestMessage(HttpMethod.Post, cloud == null
+            ? $"http://127.0.0.1:{port}/v1/chat/completions" : cloud.ChatCompletionsUrl)
         {
             Content = JsonContent.Create(payload)
         };
-        using var response = await local.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, token);
-        response.EnsureSuccessStatusCode();
+        if (cloud != null)
+            requestMessage.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cloud.ApiKey);
+        using var response = await (cloud == null ? local : cloudHttp).SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, token);
+        if (!response.IsSuccessStatusCode)
+        {
+            if (cloud != null)
+                throw new CloudResponseException(CloudFailure(response));
+            response.EnsureSuccessStatusCode();
+        }
         if (!StreamingResponses)
         {
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
@@ -471,13 +533,13 @@ internal sealed class CompanionBrain : IDisposable
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
         var raw = new StringBuilder();
         var lastPartial = "";
+        bool streamCompleted = false;
         while (await reader.ReadLineAsync(token) is { } line)
         {
             if (!line.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
                 continue;
             var data = line[5..].Trim();
-            if (data == "[DONE]")
-                break;
+            if (data == "[DONE]") { streamCompleted = true; break; }
             try
             {
                 using var chunk = JsonDocument.Parse(data);
@@ -505,7 +567,10 @@ internal sealed class CompanionBrain : IDisposable
             }
         }
 
-        return Clean(raw.ToString());
+        if (cloud != null && !streamCompleted) throw new CloudResponseException("云端流式响应中断或格式错误");
+        var result = Clean(raw.ToString());
+        if (cloud != null && result.Length == 0) throw new CloudResponseException("云端响应格式错误或内容为空");
+        return result;
     }
 
     private async Task<CompanionNews.Item?> NewsItem(CancellationToken token)
@@ -536,6 +601,7 @@ internal sealed class CompanionBrain : IDisposable
         if (Busy || !CanRunOnCurrentPower)
             return "";
         Busy = true;
+        cancelledByUser = false;
         active = new CancellationTokenSource(TimeSpan.FromSeconds(100));
         var token = active.Token;
 #if COMPANION_OCR
@@ -548,6 +614,8 @@ internal sealed class CompanionBrain : IDisposable
 #endif
         try
         {
+            var cloudConfig = UseCloud ? cloudSettings() : null;
+            bool cloud = cloudConfig != null;
             CompanionNews.Item? news = null;
             if (usePublic && CompanionNews.ShouldSelect(newsRoll()))
                 news = await NewsItem(token);
@@ -601,15 +669,16 @@ internal sealed class CompanionBrain : IDisposable
 #endif
             }
 
-            await EnsureRunner(token);
+            if (!cloud)
+                await EnsureRunner(token);
             runnerReadyMs = generationWatch.Elapsed.TotalMilliseconds;
-            Status = image == null ? "本地生成短句" : "正在理解当前窗口";
+            Status = cloud ? "云端生成短句" : image == null ? "本地生成短句" : "正在理解当前窗口";
 #if COMPANION_OCR
             var selectedPersona = news == null ? (ocr == null ? Persona : OcrPersona) : NewsPersona;
 #else
             var selectedPersona = news == null ? Persona : NewsPersona;
 #endif
-            var text = await Complete(selectedPersona, request, news == null ? CompanionDialogue.Temperature : .35, token, image, partial =>
+            var text = await Complete(selectedPersona, request, news == null ? CompanionDialogue.Temperature : .35, token, cloudConfig, image, partial =>
             {
                 firstContentMs ??= generationWatch.Elapsed.TotalMilliseconds;
                 onPartial?.Invoke(partial);
@@ -623,12 +692,12 @@ internal sealed class CompanionBrain : IDisposable
 #endif
             if (news != null && text.Length > 0)
                 lastNewsTitle = news.Title;
-            Status = ReadyStatus("本地模型就绪");
+            Status = cloud ? "云端模型就绪" : ReadyStatus("本地模型就绪");
             return CanRunOnCurrentPower ? text : "";
         }
         catch (OperationCanceledException)
         {
-            Status = "模型已暂停";
+            Status = cancelledByUser ? "模型已暂停" : "生成超时，请稍后重试";
             return "";
         }
         catch (Exception e)
@@ -724,20 +793,56 @@ internal sealed class CompanionBrain : IDisposable
 
     internal void Stop()
     {
+        cancelledByUser = true;
         active?.Cancel();
         StopRunner();
         Status = "模型已停止";
+    }
+
+    private sealed class CloudResponseException(string message) : IOException(message);
+
+    private static string CloudFailure(HttpResponseMessage response) => (int)response.StatusCode switch
+    {
+        401 or 403 => "云端鉴权失败，请检查 API Key 和访问权限",
+        429 => "云端接口限流，请稍后重试或检查额度",
+        >= 500 => "云端服务暂时不可用，请稍后重试",
+        _ => $"云端请求失败（HTTP {(int)response.StatusCode}），请检查接口地址和模型"
+    };
+
+    internal async Task<string> TestCloudConnection()
+    {
+        if (Busy) return "模型正在忙，请稍后测试";
+        if (StopCloudOnBattery && !CompanionNative.OnAC) return "电池供电 · 已暂停云端调用";
+        Busy = true;
+        cancelledByUser = false;
+        active = new CancellationTokenSource(TimeSpan.FromSeconds(100));
+        try
+        {
+            var snapshot = cloudSettings();
+            await Complete("请简短回答。", "请回复：你好。", 0, active.Token, snapshot);
+            Status = "云端连接测试成功";
+        }
+        catch (Exception e) { Status = e is IOException ? e.Message : "云端连接测试失败"; }
+        finally { Busy = false; active?.Dispose(); active = null; }
+        return Status;
     }
 
     internal async Task WarmUp()
     {
         if (Busy || RunnerPid != null || !CanRunOnCurrentPower)
             return;
+        if (UseCloud)
+        {
+            Status = "云端模式 · " + CloudResult(CompanionCloud.TryLoad());
+            return;
+        }
         Busy = true;
+        cancelledByUser = false;
         active = new CancellationTokenSource(TimeSpan.FromSeconds(90));
         try
         {
             await EnsureRunner(active.Token);
+            active.Token.ThrowIfCancellationRequested();
             Status = ReadyStatus("本地模型已驻留");
         }
         catch (Exception error)
@@ -756,6 +861,7 @@ internal sealed class CompanionBrain : IDisposable
 
     internal void CancelGeneration()
     {
+        cancelledByUser = true;
         active?.Cancel();
     }
 
@@ -764,6 +870,7 @@ internal sealed class CompanionBrain : IDisposable
         Stop();
         job.Dispose();
         local.Dispose();
+        cloudHttp.Dispose();
         weather.Dispose();
         publicWeb.Dispose();
     }

@@ -12,6 +12,8 @@ try {
         $link=Join-Path $sandbox $name
         if(!(Test-Path -LiteralPath $link)){New-Item -ItemType Junction -Path $link -Target $target | Out-Null}
     }
+        & $sdk run --project "$PSScriptRoot/tests/RunnerVerification/RunnerVerification.csproj" -c Release -p:Platform=x64 "-p:CompanionInputMode=$InputMode" -- --cloud-quiet (Join-Path $sandbox "cloud-quiet-$InputMode")
+        if($LASTEXITCODE -ne 0){throw '云端与安静时段验证失败'}
         & $sdk run --project "$PSScriptRoot/tests/RunnerVerification/RunnerVerification.csproj" -c Release -p:Platform=x64 "-p:CompanionInputMode=$InputMode" -- --weather-cache (Join-Path $sandbox "weather-$InputMode")
         if($LASTEXITCODE -ne 0){throw '天气缓存验证失败'}
         & $sdk run --project "$PSScriptRoot/tests/RunnerVerification/RunnerVerification.csproj" -c Release -p:Platform=x64 "-p:CompanionInputMode=$InputMode" -- (Join-Path $sandbox "runner-$InputMode")

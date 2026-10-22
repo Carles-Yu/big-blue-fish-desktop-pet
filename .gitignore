@@ -1,6 +1,8 @@
 **/bin/
 **/obj/
 **/.verification/
+cloud.json
+**/cloud.json
 .work/
 /work/
 .vs/

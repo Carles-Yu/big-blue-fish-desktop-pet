@@ -26,7 +26,7 @@ internal sealed partial class LinuxPetWindow
     }
     void ApplySettings(PixelPoint? requestedPosition = null)
     {
-        speechVersion++; brain.Stop(); brain.UseGpu = Preferences.GpuEnabled; brain.StopOnBattery = Preferences.StopModelOnBattery; brain.WeatherRegionCode = Preferences.WeatherRegionCode;
+        speechVersion++; brain.Stop(); loading.IsVisible = false; if (modelReply) { typing = false; bubbleWindow.Hide(); } brain.UseCloud = Preferences.CloudSelected; brain.StopCloudOnBattery = Preferences.StopCloudOnBattery; brain.RefreshModelAvailability(); brain.UseGpu = Preferences.GpuEnabled; brain.StopOnBattery = Preferences.StopModelOnBattery; brain.WeatherRegionCode = Preferences.WeatherRegionCode;
         Rescale(); var appliedPosition = Clamp(requestedPosition); nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random)); nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds); nextWarmup = DateTime.MinValue;
         if (!Preferences.HideOnFullscreen && fullscreenHidden) { fullscreenHidden = false; if (!hidden) Show(); }
         if (bubbleWindow.IsVisible) ResetDwell();
@@ -68,9 +68,11 @@ internal sealed partial class LinuxPetWindow
         var body = new StackPanel { Spacing = 8 }; var scroll = new ScrollViewer { Content = body }; Grid.SetColumn(scroll, 1); root.Children.Add(navigation); root.Children.Add(scroll);
         settings = Dialog("蓝色大肥鱼 · 设置", root, 880, 700); settings.MinWidth = 780; settings.MinHeight = 600;
         settings.Closed += (_, _) => { settings = null; refreshLinuxSettings = null; Save(); nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds); };
+        Action? disposePage = null;
+        settings.Closed += (_, _) => disposePage?.Invoke();
         Action selectedPage = General;
         void Navigate(Action page) { selectedPage = page; page(); }
-        void Title(string text) { body.Children.Clear(); body.Children.Add(new TextBlock { Text = text, FontSize = 25, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 16) }); }
+        void Title(string text) { disposePage?.Invoke(); disposePage = null; body.Children.Clear(); body.Children.Add(new TextBlock { Text = text, FontSize = 25, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 16) }); }
         void Toggle(string text, bool value, Action<bool> set) { var box = new CheckBox { Content = text, IsChecked = value, Margin = new Thickness(0, 4) }; box.IsCheckedChanged += (_, _) => { set(box.IsChecked == true); Save(); }; body.Children.Add(box); }
         void Slider(string text, double value, double low, double high, Action<double> set, double tick = 1) {
             var label = new TextBlock { Text = text + "：" + value.ToString("0.##"), Margin = new Thickness(0, 12, 0, 0) };
@@ -88,11 +90,49 @@ internal sealed partial class LinuxPetWindow
             Select("气泡驻留时间", CompanionPreferences.BubbleDurationLabels, Preferences.BubbleDurationIndex, value => { Preferences.BubbleDurationIndex = value; ResetDwell(); });
         }
         void Model() {
-            Title("模型与信息"); Toggle("启用本地大模型", Preferences.ModelEnabled, value => { Preferences.ModelEnabled = value; ApplySettings(); });
+            Title("模型与信息"); Toggle("启用 AI 陪伴", Preferences.ModelEnabled, value => { Preferences.ModelEnabled = value; ApplySettings(); });
+            Select("模型模式", new[] { "本地模型", "云端模型" }, Preferences.CloudSelected ? 1 : 0, value => { Preferences.ModelMode = value == 1 ? "Cloud" : "Local"; ApplySettings(); });
+            body.Children.Add(Paragraph(CompanionCloud.ScreenNotice));
+            var cloud = CompanionCloud.LoadEditor();
+            var sources = Paragraph(cloud.Sources + "\n" + cloud.Warning); body.Children.Add(sources);
+            TextBox CloudInput(string name, string value, bool secret = false)
+            {
+                body.Children.Add(new TextBlock { Text = name, Margin = new Thickness(0, 8, 0, 4) });
+                var box = new TextBox { Text = value, PasswordChar = secret ? '●' : '\0', HorizontalAlignment = HorizontalAlignment.Stretch };
+                body.Children.Add(box); return box;
+            }
+            var cloudUrl = CloudInput("接口地址", cloud.BaseUrl);
+            var cloudModel = CloudInput("模型", cloud.Model);
+            var cloudKey = CloudInput("API Key", cloud.ApiKey, true);
+            if (cloud.EnvironmentOverridesKey) body.Children.Add(Paragraph("检测到环境变量 DEEPSEEK_API_KEY，它会盖过这里保存的 Key。"));
+            var cloudMessage = Paragraph("");
+            body.Children.Add(ActionButton("保存线上接口", () => {
+                try {
+                    CompanionCloud.SaveUser(cloudUrl.Text, cloudModel.Text, cloudKey.Text);
+                    brain.RefreshModelAvailability(); ApplySettings();
+                    var effective = CompanionCloud.LoadEditor(); cloudUrl.Text = effective.BaseUrl; cloudModel.Text = effective.Model; cloudKey.Text = effective.ApiKey;
+                    sources.Text = effective.Sources + "\n" + effective.Warning;
+                    cloudMessage.Text = "已保存，生效配置见上方；模型模式保持不变。";
+                } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { cloudMessage.Text = error.Message; }
+            }));
+            body.Children.Add(cloudMessage);
+            body.Children.Add(Paragraph("测试已保存的生效配置，仅发送固定短句，会产生少量调用费用，不读取屏幕。"));
+            var testing = false;
+            body.Children.Add(ActionButton("测试已保存的云端连接", async () => {
+                if (testing) return; testing = true;
+                try { cloudMessage.Text = "正在测试…"; cloudMessage.Text = await brain.TestCloudConnection(); }
+                finally { testing = false; }
+            }));
+            var runtime = Paragraph(""); body.Children.Add(runtime);
+            var statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            void RefreshStatus() { runtime.Text = (Preferences.CloudSelected ? "云端模型：" + (CompanionCloud.TryLoad()?.Model ?? "未配置 Key") + " · " + brain.CloudResult(CompanionCloud.TryLoad()) : "本地模型") + "\n" + (brain.CanRunOnCurrentPower ? "当前供电允许运行" : brain.PowerPauseReason) + "\n运行状态：" + brain.Status; }
+            RefreshStatus(); statusTimer.Tick += (_, _) => RefreshStatus(); statusTimer.Start();
+            disposePage = () => statusTimer.Stop();
             Toggle("使用 GPU 加速", Preferences.GpuEnabled, value => { Preferences.GpuEnabled = value; ApplySettings(); });
-            Toggle("笔记本离电时暂停模型", Preferences.StopModelOnBattery, value => { Preferences.StopModelOnBattery = value; ApplySettings(); });
+            Toggle("笔记本离电时暂停并卸载本地模型", Preferences.StopModelOnBattery, value => { Preferences.StopModelOnBattery = value; ApplySettings(); });
+            Toggle("电池供电时暂停云端调用", Preferences.StopCloudOnBattery, value => { Preferences.StopCloudOnBattery = value; ApplySettings(); });
             Toggle("联网获取天气和科技新闻", Preferences.PublicInfo, value => Preferences.PublicInfo = value);
-            Toggle("感知当前前台应用", Preferences.ForegroundEnabled, value => Preferences.ForegroundEnabled = value);
+            Toggle("感知当前应用（云端模式会发送 OCR 文字）", Preferences.ForegroundEnabled, value => { Preferences.ForegroundEnabled = value; ApplySettings(); });
             body.Children.Add(ActionButton(brain.ModelAvailable ? "管理本地模型" : "安装模型", async () => await InstallModel()));
             Select("自动说话间隔", CompanionPreferences.SpeechRanges.Select(r => $"{r.Min}–{r.Max} 分钟").ToArray(), Preferences.SpeechRangeIndex, value => { Preferences.SpeechMinMinutes = CompanionPreferences.SpeechRanges[value].Min; nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random)); });
             body.Children.Add(new TextBlock { Text = "天气地区", Margin = new Thickness(0,12,0,4) });
@@ -132,9 +172,17 @@ internal sealed partial class LinuxPetWindow
             var chat = new CheckBox { Content = "双击与鱼鱼对话", IsChecked = Preferences.McpChatEnabled };
             chat.Click += (_,_) => { Preferences.McpChatEnabled = chat.IsChecked == true; if (!Preferences.McpChatEnabled) mcpInput?.Close(); Save(); };
             extra.Children.Add(chat); extra.Children.Add(Paragraph("仅在 MCP 客户端已连接时生效，输入内容通过 MCP 发送给已连接的 Agent。"));
-            var config = ActionButton("复制 MCP 连接配置", async () => {
-                if (settings?.Clipboard != null) await settings.Clipboard.SetTextAsync(System.Text.Json.JsonSerializer.Serialize(new { mcpServers = new Dictionary<string, object> { ["big-blue-fish"] = new { command = Path.Combine(AppContext.BaseDirectory, "BigBlueFish.Mcp"), args = Array.Empty<string>() } } }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-            }); extra.Children.Add(config); body.Children.Add(extra);
+            body.Children.Add(extra);
+            body.Children.Add(new TextBlock { Text = "连接命令", FontSize = 16, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 8, 0, 4) });
+            body.Children.Add(Paragraph(CompanionClientConfig.BridgeExists ? "Cursor 和 Codex 都启动下面这个本机程序，没有网址。桌宠要先开着。" : "还没有找到桥接程序。"));
+            void Preview(string name, string text) { body.Children.Add(new TextBlock { Text = name, Margin = new Thickness(0, 6, 0, 4) }); body.Children.Add(new TextBox { Text = text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 64 }); }
+            Preview("桥接程序", CompanionClientConfig.BridgePath); Preview("Cursor", CompanionClientConfig.CursorJson); Preview("Codex", CompanionClientConfig.CodexToml);
+            var clientMessage = Paragraph("");
+            body.Children.Add(ActionButton("复制 Cursor 配置", async () => { if (settings?.Clipboard != null) await settings.Clipboard.SetTextAsync(CompanionClientConfig.CursorJson); clientMessage.Text = "Cursor 配置已复制。"; }));
+            body.Children.Add(ActionButton("写入 Cursor", () => { try { CompanionClientConfig.WriteCursor(); clientMessage.Text = "已写入 " + CompanionClientConfig.CursorPath; } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { clientMessage.Text = error.Message; } }));
+            body.Children.Add(ActionButton("复制 Codex 配置", async () => { if (settings?.Clipboard != null) await settings.Clipboard.SetTextAsync(CompanionClientConfig.CodexToml); clientMessage.Text = "Codex 配置已复制。"; }));
+            body.Children.Add(ActionButton("写入 Codex", () => { try { CompanionClientConfig.WriteCodex(); clientMessage.Text = "已写入 " + CompanionClientConfig.CodexPath; } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { clientMessage.Text = error.Message; } }));
+            body.Children.Add(clientMessage);
             enabled.Click += async (_, _) => {
                 bool on = enabled.IsChecked == true;
                 if (on && !await Confirm("开启 MCP 接口", ControlTools.PrivacyWarning, "了解并开启")) { enabled.IsChecked = false; return; }

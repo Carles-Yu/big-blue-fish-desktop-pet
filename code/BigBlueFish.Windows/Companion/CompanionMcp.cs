@@ -84,6 +84,7 @@ public partial class MainWindow
     private void ShowMcpSpeech(string text)
     {
         speechRequestVersion++; brain.CancelGeneration(); EndModelSpeech(); EndGreetingNotice();
+        automaticBubble = false;
         externalBubble = true;
         bubbleIsModelReply = false;
         bubbleUntil = DateTime.MaxValue;
@@ -152,7 +153,7 @@ public partial class MainWindow
     }
     private Dictionary<string, object?> CurrentMcpSettings()
     {
-        var result = typeof(CompanionPreferences).GetProperties().ToDictionary(p => p.Name, p => p.GetValue(preferences));
+        var result = typeof(CompanionPreferences).GetProperties().Where(p => p.Name == "McpEnabled" || ControlTools.SettingNames.Contains(p.Name)).ToDictionary(p => p.Name, p => p.GetValue(preferences));
         result["StartupEnabled"] = StartupEnabled();
         return result;
     }
@@ -187,7 +188,7 @@ public partial class MainWindow
             && !await ConfirmMcp(companionSettings, "开启提线木偶模式", ControlTools.PuppetWarning, token)) throw new OperationCanceledException("用户取消开启提线木偶模式。");
         token.ThrowIfCancellationRequested();
         if (!preferences.McpEnabled) throw new OperationCanceledException();
-        bool oldGpu = preferences.GpuEnabled, oldModel = preferences.ModelEnabled;
+        bool oldGpu = preferences.GpuEnabled, oldModel = preferences.ModelEnabled, oldForeground = preferences.ForegroundEnabled;
         string oldRegion = preferences.WeatherRegionCode;
         foreach (var item in values)
         {
@@ -197,7 +198,7 @@ public partial class MainWindow
         if (values.TryGetValue("PuppetMode", out puppet)) SetPuppetMode((bool)puppet!);
         if (oldGpu != preferences.GpuEnabled || oldModel && !preferences.ModelEnabled) { speechRequestVersion++; brain.Stop(); }
         brain.UseGpu = preferences.GpuEnabled; brain.WeatherRegionCode = preferences.WeatherRegionCode;
-        if (oldRegion != preferences.WeatherRegionCode) { speechRequestVersion++; brain.CancelGeneration(); }
+        if (oldRegion != preferences.WeatherRegionCode || oldForeground != preferences.ForegroundEnabled) { speechRequestVersion++; brain.CancelGeneration(); EndModelSpeech(); ClearCompanionModelReply(); }
         ApplyCompanionPowerPolicy(); ApplyCompanionScale(false); ApplyCompanionBubbleScale(false);
         if (values.TryGetValue("Left", out var left) && left is double x) Left = x;
         if (values.TryGetValue("Top", out var top) && top is double y) Top = y;
@@ -222,19 +223,61 @@ public partial class MainWindow
         chat.Click += (_, _) => { preferences.McpChatEnabled = chat.IsChecked == true; if (!preferences.McpChatEnabled) mcpInput?.Close(); SaveCompanion(); };
         extra.Children.Add(chat);
         extra.Children.Add(new TextBlock { Text = "仅在 MCP 客户端已连接时生效，输入内容通过 MCP 发送给已连接的 Agent。", Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap });
-        var config = new Button { Content = "复制 MCP 连接配置", Margin = new(0, 12, 0, 8) };
-        config.Click += (_, _) => {
-            var command = Path.Combine(AppContext.BaseDirectory, "BigBlueFish.Mcp.exe");
-            Clipboard.SetText(JsonSerializer.Serialize(new { mcpServers = new Dictionary<string, object> { ["big-blue-fish"] = new { command, args = Array.Empty<string>() } } }, new JsonSerializerOptions { WriteIndented = true }));
-            config.Content = "连接配置已复制";
-        };
-        extra.Children.Add(config);
-        var status = new TextBlock { Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap };
-        extra.Children.Add(status);
-        var clock = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        clock.Tick += (_, _) => status.Text = $"已连接 {mcpServer?.Connections ?? 0} 个 MCP 客户端";
-        clock.Start();
         panel.Children.Add(extra);
+        panel.Children.Add(new TextBlock { Text = "连接命令", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new(0, 16, 0, 6) });
+        panel.Children.Add(new TextBlock
+        {
+            Text = CompanionClientConfig.BridgeExists
+                ? "Cursor 和 Codex 都启动下面这个本机程序，没有网址。桌宠要先开着，桥接大约等待 5 秒。"
+                : "还没有找到桥接程序。请先编译 BigBlueFish.Mcp，再把下面的路径写进客户端。",
+            Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap
+        });
+        TextBox Preview(string name, string text, double height)
+        {
+            panel.Children.Add(new TextBlock { Text = name, Margin = new(0, 10, 0, 0) });
+            var box = new TextBox
+            {
+                Text = text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
+                Height = height, VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                FontFamily = new FontFamily("Cascadia Mono, Consolas"), FontSize = 12,
+                Padding = new Thickness(8, 6, 8, 6), Margin = new(0, 4, 0, 2),
+                BorderBrush = new SolidColorBrush(Color.FromRgb(220, 229, 242)),
+                Background = new SolidColorBrush(Color.FromRgb(247, 249, 253))
+            };
+            System.Windows.Automation.AutomationProperties.SetName(box, name);
+            panel.Children.Add(box);
+            return box;
+        }
+        Preview("桥接程序", CompanionClientConfig.BridgePath, 36);
+        Preview("Cursor", CompanionClientConfig.CursorJson, 96);
+        Preview("Codex", CompanionClientConfig.CodexToml, 88);
+        var actions = new WrapPanel { Margin = new(0, 8, 0, 4) };
+        var result = new TextBlock { Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 8) };
+        Button Command(string label, Action action)
+        {
+            var button = new Button { Content = label, Margin = new(0, 0, 8, 8) };
+            button.Click += (_, _) =>
+            {
+                try { action(); }
+                catch (Exception error)
+                { result.Text = error.Message; }
+            };
+            actions.Children.Add(button);
+            return button;
+        }
+        Command("复制 Cursor 配置", () => { Clipboard.SetText(CompanionClientConfig.CursorJson); result.Text = "Cursor 配置已复制。"; });
+        Command("写入 Cursor", () => { CompanionClientConfig.WriteCursor(); result.Text = "已写入 " + CompanionClientConfig.CursorPath; });
+        Command("复制 Codex 配置", () => { Clipboard.SetText(CompanionClientConfig.CodexToml); result.Text = "Codex 配置已复制。"; });
+        Command("写入 Codex", () => { CompanionClientConfig.WriteCodex(); result.Text = "已写入 " + CompanionClientConfig.CodexPath; });
+        panel.Children.Add(actions);
+        panel.Children.Add(result);
+        var status = new TextBlock { Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap };
+        var clock = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+        clock.Tick += (_, _) => status.Text = preferences.McpEnabled
+            ? $"已连接 {mcpServer?.Connections ?? 0} 个客户端。"
+            : "MCP 接口未开启。开启后，已写入配置的客户端才能连上。";
+        clock.Start();
+        panel.Children.Add(status);
         enabled.Click += async (_, _) => {
             enabled.IsEnabled = false;
             try {

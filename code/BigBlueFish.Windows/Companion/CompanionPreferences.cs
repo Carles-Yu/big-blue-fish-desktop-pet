@@ -5,6 +5,25 @@ using System.Text.Json;
 namespace BigBlueFish.Windows;
 internal sealed class CompanionPreferences
 {
+    public string? ModelMode { get; set; }
+    public bool StopCloudOnBattery { get; set; }
+    public DateTimeOffset? QuietUntilUtc { get; set; }
+    internal bool CloudSelected => ModelMode == "Cloud";
+    internal bool MigrateMode(bool hasCloudKey)
+    {
+        if (ModelMode is "Local" or "Cloud") return false;
+        ModelMode = hasCloudKey ? "Cloud" : "Local";
+        return true;
+    }
+    private static CompanionPreferences Initialize(CompanionPreferences value)
+    {
+        if (value.MigrateMode(CompanionCloud.TryLoad() != null))
+        {
+            try { value.Save(); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        return value;
+    }
     public bool ModelEnabled { get; set; } = true;
     public bool GpuEnabled { get; set; } = true;
     public bool PublicInfo { get; set; } = true;
@@ -97,14 +116,14 @@ internal sealed class CompanionPreferences
                     s.SpeechMinMinutes = NormalizeSpeechMinimum(s.SpeechMinMinutes);
                     s.BubbleDurationIndex = Math.Clamp(s.BubbleDurationIndex, 0, BubbleDurations.Length - 1);
                     s.WeatherRegionCode = CompanionRegions.District(s.WeatherRegionCode).Code;
-                    return s;
+                    return Initialize(s);
                 }
             }
             catch
             {
             }
 
-        return new();
+        return Initialize(new());
     }
 
     public void Save()
@@ -115,5 +134,20 @@ internal sealed class CompanionPreferences
             File.Replace(t, "preferences.json", "preferences.json.bak");
         else
             File.Move(t, "preferences.json");
+    }
+}
+
+// UTC deadline survives restarts. Inject a clock in verification rather than waiting an hour.
+internal sealed class CompanionQuietHours(CompanionPreferences preferences, Func<DateTimeOffset>? clock = null)
+{
+    private DateTimeOffset Now => (clock ?? (() => DateTimeOffset.UtcNow))();
+    internal bool Active => preferences.QuietUntilUtc is { } until && until > Now;
+    internal string MenuLabel => Active ? $"恢复主动发言（安静至 {preferences.QuietUntilUtc!.Value.ToLocalTime():HH:mm}）" : "安静一小时";
+    internal void Start() => preferences.QuietUntilUtc = Now.AddHours(1);
+    internal void Resume() => preferences.QuietUntilUtc = null;
+    internal bool Expire()
+    {
+        if (preferences.QuietUntilUtc == null || Active) return false;
+        Resume(); return true;
     }
 }

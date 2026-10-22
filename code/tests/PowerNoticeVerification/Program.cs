@@ -45,7 +45,7 @@ internal static class Program
             typeof(Application).GetField("_startupUri", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(app, null);
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
             Directory.SetCurrentDirectory(sandbox);
-            File.WriteAllText("preferences.json", "{\"ModelEnabled\":true,\"GpuEnabled\":false,\"StopModelOnBattery\":true,\"PublicInfo\":false,\"ForegroundEnabled\":false,\"BubbleDurationIndex\":0}");
+            File.WriteAllText("preferences.json", "{\"ModelMode\":\"Local\",\"ModelEnabled\":true,\"GpuEnabled\":false,\"StopModelOnBattery\":true,\"PublicInfo\":false,\"HideOnFullscreen\":false,\"ForegroundEnabled\":false,\"BubbleDurationIndex\":0}");
             var native = typeof(App).Assembly.GetType("BigBlueFish.Windows.CompanionNative")!;
             void Power(bool value) => native.GetField("TestPowerOverride", Access)!.SetValue(null, value);
             Power(false);
@@ -94,7 +94,12 @@ internal static class Program
             Set(preferences, "BubbleDurationIndex", 0);
             Set(preferences, "ModelEnabled", false);
             ((Task)Invoke(window, "SpeakCompanionWeather")!).GetAwaiter().GetResult(); Steady(300);
-            Check(text.Text.Contains("启用本地大模型") && bubble.Visibility == Visibility.Visible, "Disabled-model notice disappeared");
+            Check(text.Text.Contains("启用 AI 陪伴") && bubble.Visibility == Visibility.Visible, "Disabled-model notice disappeared");
+            if (args.Contains("--no-real-model"))
+            {
+                Console.WriteLine($"Power notice verification: {checks} checks passed; real CPU inference omitted by --no-real-model.");
+                return 0;
+            }
             Set(preferences, "ModelEnabled", true);
             Power(true); Invoke(window, "ApplyCompanionPowerPolicy");
             var request = (Task)Invoke(window, "SpeakCompanionTest")!;

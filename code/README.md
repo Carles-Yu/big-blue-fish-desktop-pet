@@ -90,3 +90,9 @@ Linux 使用 Avalonia、FFmpeg 与 Tesseract。需要 .NET 10 SDK，以及含 gc
 Linux 主入口在 `BigBlueFish.Linux/`，跨平台控制协议在 `BigBlueFish.Control/`，stdio 桥接在 `BigBlueFish.Mcp/`。共享项目分别锁定 Windows 和 Linux 的 RID 依赖；Windows 无MCP版另用 `packages.safe.lock.json`。Linux 的用户数据目录、X11 截图、Wayland 门户及更新行为详见[当前行为规格](../docs/AGENT_FUNCTIONAL_SPEC.md)。
 
 `tests/McpProtocolVerification/` 验证真实 stdio 桥接与协议，`tests/McpUiVerification/` 验证 Windows MCP、窗口焦点、确认交互与拖动，`tests/LinuxVerification/` 验证 Linux 的实际窗口与 MCP；`tests/SafeEditionVerification/` 检查无MCP版的排除结果。测试需分别使用对应平台及版本类型构建。
+
+## 云端与安静时段验证
+
+运行 `dotnet run --project tests/RunnerVerification/RunnerVerification.csproj -c Release -p:Platform=x64 -p:CompanionInputMode=Ocr -- --cloud-quiet <隔离目录>`，验证配置优先级、迁移、原子保存、云端请求、失败与取消、电池策略、配置快照以及 Windows 安静调度和设置界面。云端网络使用注入的 HTTP 处理器，不需要真实 Key，不调用付费接口；生成的设置截图位于隔离目录的 `ui/settings.png`。在命令的 `--` 前增加 `-p:CompanionEdition=Safe` 可验证无MCP版的相同功能；Linux 界面仍需在 Linux 桌面环境验证。
+
+`PowerNoticeVerification` 可加 `--no-real-model` 只验证离电和关闭模型时的提示，不运行真实 CPU 推理；完整验证仍需要已准备的本地模型和运行时。
