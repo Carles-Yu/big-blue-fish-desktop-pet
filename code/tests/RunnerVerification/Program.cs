@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net;
@@ -33,9 +33,17 @@ internal static class Program
 
     static async Task<int> Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--chat-search") return await ChatSearchVerification.Run();
+        if (args.Length > 0 && args[0] == "app-server") return await CodexQuotaVerification.Fixture();
         if (args.Length > 0 && args[0] == "--fake-runner") return await FakeRunner(int.Parse(args[1]), args[2], args.Length < 4 || args[3] == "gpu");
         try
         {
+            if (args[0] == "--release-foundation") return await ReleaseFoundationVerification.Run(args[1]);
+            if (args[0] == "--codex-quota") return await CodexQuotaVerification.Run(args[1], args.Contains("--live"));
+            if (args[0] == "--cursor-quota") return await CursorQuotaVerification.Run(args.Contains("--live"));
+            if (args[0] == "--agent-ui") return AgentUiVerification.Run(args[1]);
+            if (args[0] == "--memory-ui") return MemoryUiVerification.Run(args[1]);
+            if (args[0] == "--balance") return BalanceQueryCheck();
             if (args[0] == "--cloud-quiet") return await CloudQuietVerification.Run(args[1]);
             if (args[0] == "--performance-export") return PerformanceVerification.Export(args[1]);
             if (args[0] == "--latency-screen") return await LatencyVerification.Run(args[1]);
@@ -195,6 +203,40 @@ internal static class Program
             return 0;
         }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
+    }
+
+    private static int BalanceQueryCheck()
+    {
+        Check(CompanionCloud.BalanceUri("https://api.deepseek.com/v1").AbsoluteUri == "https://api.deepseek.com/user/balance", "Balance query uses the DeepSeek account endpoint");
+        Check(CompanionCloud.IsDeepSeek("https://api.deepseek.com") && !CompanionCloud.IsDeepSeek("https://notdeepseek.com"), "Only DeepSeek hosts are recognized");
+        var formatted = CompanionCloud.FormatBalance("""{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"12.50","granted_balance":"2.50","topped_up_balance":"10.00"}]}""");
+        Check(formatted.Detail.Contains("人民币") && formatted.Detail.Contains("12.50") && formatted.Detail.Contains("充值 10.00") && formatted.Detail.Contains("赠送 2.50")
+            && formatted.Speech.Contains("主人") && formatted.Speech.Contains("还剩 12.50 元") && formatted.Speech.Contains("2.50 元是送的"), "Balance response is shown in yuan and spoken by the fish");
+        var unavailable = CompanionCloud.FormatBalance("""{"is_available":false,"balance_infos":[{"currency":"USD","total_balance":"0","granted_balance":"0","topped_up_balance":"0"}]}""");
+        Check(unavailable.Detail.Contains("当前不可用") && unavailable.Detail.Contains("美元") && unavailable.Speech.Contains("用不了") && unavailable.Speech.Contains("0 美元"), "Unavailable account stays visible");
+        int calls = 0;
+        var other = CompanionCloud.QueryBalance(new CompanionCloud.Editor("https://example.com/v1", "other-model", "other-key", false, "", ""), new HttpClient(new BlockingHandler(() => calls++))).GetAwaiter().GetResult();
+        Check(calls == 0 && other.Detail.Contains("不是 DeepSeek") && other.Speech.Contains("小钱袋"), "Other providers are not queried");
+        var missing = CompanionCloud.QueryBalance(new CompanionCloud.Editor("https://api.deepseek.com", "deepseek-flash", "", false, "", ""), new HttpClient(new BlockingHandler(() => calls++))).GetAwaiter().GetResult();
+        Check(calls == 0 && missing.Detail.Contains("尚未配置") && missing.Speech.Contains("钥匙"), "Missing key does not call the balance endpoint");
+        var seen = new TaskCompletionSource<HttpRequestMessage>();
+        var client = new HttpClient(new BalanceHandler(request => { seen.TrySetResult(request); return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"1","granted_balance":"0","topped_up_balance":"1"}]}""") }; }));
+        var result = CompanionCloud.QueryBalance(new CompanionCloud.Editor("https://api.deepseek.com/v1", "deepseek-flash", "balance-secret", false, "", ""), client).GetAwaiter().GetResult();
+        var sent = seen.Task.GetAwaiter().GetResult();
+        Check(sent.RequestUri!.AbsoluteUri == "https://api.deepseek.com/user/balance" && sent.Headers.Authorization!.Parameter == "balance-secret" && result.Detail.Contains("合计 1")
+            && result.Speech == "主人，鱼鱼看过啦，还剩 1 元呢～" && !result.Speech.Contains("balance-secret"), "Saved DeepSeek key is sent only to the balance endpoint");
+        Console.WriteLine("BALANCE-OK " + checks);
+        return 0;
+    }
+
+    private sealed class BlockingHandler(Action called) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) { called(); throw new HttpRequestException("should not send"); }
+    }
+
+    private sealed class BalanceHandler(Func<HttpRequestMessage, HttpResponseMessage> send) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token) => Task.FromResult(send(request));
     }
 
     private static async Task<int> FakeRunner(int port, string modePath, bool gpu)

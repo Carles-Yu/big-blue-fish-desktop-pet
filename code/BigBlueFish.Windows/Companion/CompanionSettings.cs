@@ -1,4 +1,4 @@
-using BigBlueFish.Deployment;
+﻿using BigBlueFish.Deployment;
 using Microsoft.Win32;
 using System;
 using System.IO;
@@ -32,15 +32,17 @@ public partial class MainWindow
             MinHeight = Math.Min(450, SystemParameters.WorkArea.Height - 32),
             ResizeMode = ResizeMode.CanResize,
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            Background = new SolidColorBrush(Color.FromRgb(246, 248, 252)),
-            FontFamily = new FontFamily("Microsoft YaHei UI"),
-            FontSize = 14,
+            Background = new SolidColorBrush(Color.FromRgb(249, 250, 255)),
+            Foreground = new SolidColorBrush(Color.FromRgb(65, 82, 113)),
+            FontFamily = CompanionSettingsTheme.CuteFont,
+            FontSize = 20,
             ShowInTaskbar = true,
             ShowActivated = true,
             Topmost = false
         };
         w.Resources.MergedDictionaries.Add(new ResourceDictionary
         { Source = new Uri("/BigBlueFish;component/Companion/CompanionSettingsStyles.xaml", UriKind.Relative) });
+        CompanionSettingsTheme.Apply(w);
         companionSettings = w;
         BuildCompanionSettingsContent(w);
         w.Closed += (_, _) =>
@@ -48,6 +50,7 @@ public partial class MainWindow
             disposeCompanionSettingsContent?.Invoke();
             disposeCompanionSettingsContent = refreshCompanionSettings = null;
             companionSettings = null;
+            refreshMemoryList = null;
             SaveCompanion();
         };
         ActivateCompanionSettings(w);
@@ -56,36 +59,47 @@ public partial class MainWindow
     private void BuildCompanionSettingsContent(Window w, int selectedPage = 0, double[]? scrollOffsets = null)
     {
         disposeCompanionSettingsContent?.Invoke();
-        var shell = new Grid { Background = w.Background };
+        var shell = new Grid { Background = Brushes.Transparent };
+        var backdrop = new CompanionSettingsBackdrop();
+        Grid.SetColumnSpan(backdrop, 2); shell.Children.Add(backdrop);
         shell.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(200) });
         shell.ColumnDefinitions.Add(new ColumnDefinition());
         w.Content = shell;
-        var sidebar = new StackPanel { Margin = new Thickness(18, 24, 18, 18) };
-        var sidebarFrame = new Border { Background = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(226, 233, 243)), BorderThickness = new Thickness(0, 0, 1, 0), Child = sidebar };
+        var sidebar = new StackPanel { Margin = new Thickness(16, 22, 16, 12) };
+        var sidebarLayout = new Grid();
+        sidebarLayout.RowDefinitions.Add(new RowDefinition());
+        sidebarLayout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        sidebarLayout.Children.Add(sidebar);
+        var sidebarFrame = new Border { Background = new SolidColorBrush(Color.FromArgb(170, 243, 248, 255)), BorderBrush = new SolidColorBrush(Color.FromRgb(233, 237, 247)), BorderThickness = new Thickness(0, 0, 1, 0), Child = sidebarLayout };
         shell.Children.Add(sidebarFrame);
-        sidebar.Children.Add(new TextBlock { Text = "蓝色大肥鱼", FontSize = 22, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromRgb(53, 76, 129)), Margin = new Thickness(5, 0, 0, 8) });
+        sidebar.Children.Add(new TextBlock { Text = "蓝色大肥鱼", FontSize = 25, FontWeight = FontWeights.Normal, Foreground = new SolidColorBrush(Color.FromRgb(53, 76, 129)), Margin = new Thickness(5, 0, 0, 8) });
         var version = typeof(MainWindow).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
             .Cast<System.Reflection.AssemblyInformationalVersionAttribute>().First().InformationalVersion.Split('+')[0];
 #if COMPANION_SAFE
         version += " · 无MCP版";
 #endif
-        sidebar.Children.Add(new TextBlock { Text = version + " · 陪伴设置", Foreground = Brushes.SlateGray, Margin = new Thickness(5, 0, 0, 28) });
+        sidebar.Children.Add(new TextBlock { Text = version, Foreground = Brushes.SlateGray, FontSize = 15, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(5, 0, 0, 24) });
 #if COMPANION_SAFE
-        var titles = new[] { "陪伴与外观", "说话与天气", "模型与供电" };
+        var titles = new[] { "陪伴与外观", "说话与天气", "模型与供电", "鱼鱼的记忆" };
 #else
-        var titles = new[] { "陪伴与外观", "说话与天气", "模型与供电", "Agent 与 MCP" };
+        var titles = new[] { "陪伴与外观", "说话与天气", "模型与供电", "Agent 与 MCP", "鱼鱼的记忆" };
 #endif
+        var subtitles = new[] { "把桌面布置成喜欢的样子。", "聊聊天，也关心一下今天的天气。", "给鱼鱼一点灵感，也留一点安静。", "连接你的助手，让鱼鱼帮忙传话。", "把值得记住的小事，慢慢收好。" };
+        var navIcons = new[] { "\uE790", "\uE706", "\uE950", "\uE71B", "\uE8F1" };
         var pages = new StackPanel[titles.Length];
         var views = new ScrollViewer[titles.Length];
         var navigation = new Button[titles.Length];
         for (int i = 0; i < pages.Length; i++)
         {
             pages[i] = new StackPanel { Margin = new Thickness(26, 24, 26, 24) };
-            pages[i].Children.Add(new TextBlock { Text = titles[i], FontSize = 25, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromRgb(42, 56, 83)), Margin = new Thickness(0, 0, 0, 20) });
+            var pageHeader = new StackPanel { Margin = new Thickness(0, 0, 0, 20) };
+            pageHeader.Children.Add(new TextBlock { Text = titles[i], FontSize = 29, Foreground = new SolidColorBrush(Color.FromRgb(65, 86, 130)) });
+            pageHeader.Children.Add(new TextBlock { Text = i == titles.Length - 1 ? subtitles[^1] : subtitles[i], Foreground = new SolidColorBrush(Color.FromRgb(130, 146, 171)), FontSize = 14, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 5, 0, 0) });
+            pages[i].Children.Add(pageHeader);
             views[i] = new ScrollViewer { Content = pages[i], VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Visibility = i == selectedPage ? Visibility.Visible : Visibility.Collapsed };
             Grid.SetColumn(views[i], 1); shell.Children.Add(views[i]);
             int selected = i;
-            var button = navigation[i] = new Button { Content = titles[i], HorizontalContentAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 10), BorderThickness = new Thickness(0), Background = i == selectedPage ? new SolidColorBrush(Color.FromRgb(220, 234, 255)) : Brushes.Transparent };
+            var button = navigation[i] = new Button { Content = titles[i], Tag = i == titles.Length - 1 ? navIcons[^1] : navIcons[i], Style = (Style)w.FindResource("FishNavigationStyle"), FontSize = 20, HorizontalContentAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 10), BorderThickness = new Thickness(0), Background = i == selectedPage ? new SolidColorBrush(Color.FromRgb(220, 234, 255)) : Brushes.Transparent };
             button.Click += (_, _) =>
             {
                 selectedPage = selected;
@@ -100,7 +114,7 @@ public partial class MainWindow
             foreach (var child in children) panel.Children.Remove(child);
             var inner = new StackPanel { Margin = new Thickness(20) };
             foreach (var child in children) inner.Children.Add(child);
-            panel.Children.Add(new Border { Background = Brushes.White, BorderBrush = new SolidColorBrush(Color.FromRgb(226, 233, 243)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Child = inner });
+            panel.Children.Add(new Border { Background = new SolidColorBrush(Color.FromArgb(205, 255, 255, 255)), BorderBrush = new SolidColorBrush(Color.FromRgb(226, 233, 243)), BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(20), Child = inner });
         }
         var p = pages[2];
         void Toggle(string label, bool value, Action<bool> change)
@@ -156,7 +170,7 @@ public partial class MainWindow
         Toggle("使用显卡加速（关闭则使用 CPU）", preferences.GpuEnabled, v =>
         {
             preferences.GpuEnabled = v;
-            brain.Stop();
+            if (!preferences.CloudSelected) { speechRequestVersion++; brain.Stop(); EndModelSpeech(); ClearCompanionModelReply(); }
             brain.UseGpu = v;
             nextWarmup = DateTime.MinValue;
         });
@@ -315,7 +329,7 @@ public partial class MainWindow
                 ? "云端模型：" + (cloud?.Model ?? "未配置 Key") + "\n" + brain.CloudResult(cloud)
                 : "本地模型：" + (local ? brain.Status : "尚未安装");
             status.Text = (brain.CanRunOnCurrentPower ? (CompanionNative.OnAC ? "已插电" : "电池供电 · 允许当前模式运行") : brain.PowerPauseReason)
-                + "\n" + detail + "\n运行状态：" + brain.Status;
+                + "\n" + detail + "\n运行状态：" + brain.Status + "\n" + BigBlueFish.Deployment.ReleaseIdentity.Description;
 
         }
         AddCloudSettings(p, UpdateStatus);
@@ -354,8 +368,13 @@ public partial class MainWindow
             w.Close();
             base.Close();
         });
-        Action? disposeMcpSettings = pages.Length > 3 ? AddMcpSettings(pages[3], w) : null;
-        foreach (var panel in pages) Card(panel);
+#if COMPANION_SAFE
+        Action? disposeMcpSettings = null;
+#else
+        Action? disposeMcpSettings = AddMcpSettings(pages[3], w);
+#endif
+        AddMemorySettings(pages[^1]);
+        foreach (var panel in pages.Take(pages.Length - 1)) Card(panel);
         disposeCompanionSettingsContent = () => { timer.Stop(); disposeMcpSettings?.Invoke(); };
         refreshCompanionSettings = () => BuildCompanionSettingsContent(w, selectedPage, views.Select(v => v.VerticalOffset).ToArray());
         if (scrollOffsets != null) w.Dispatcher.BeginInvoke(DispatcherPriority.Loaded, (Action)(() =>
@@ -416,8 +435,10 @@ public partial class MainWindow
         {
             try
             {
+                var previousCloud = CompanionCloud.TryLoad();
                 CompanionCloud.SaveUser(baseUrl.Text, model.Text, key.Password);
-                ApplyModelConfiguration();
+                if (preferences.CloudSelected && previousCloud != CompanionCloud.TryLoad()) ApplyModelConfiguration();
+                else brain.RefreshModelAvailability();
                 var effective = CompanionCloud.LoadEditor();
                 baseUrl.Text = effective.BaseUrl; model.Text = effective.Model; key.Password = effective.ApiKey;
                 sources.Text = effective.Sources + "\n" + effective.Warning;
@@ -440,6 +461,21 @@ public partial class MainWindow
             finally { test.IsEnabled = true; }
         };
         panel.Children.Add(test);
+        var balance = new Button { Content = "查询 DeepSeek 余额", Margin = new Thickness(0, 6, 0, 4), HorizontalAlignment = HorizontalAlignment.Left };
+        balance.Click += async (_, _) =>
+        {
+            balance.IsEnabled = false;
+            try { message.Text = "正在查询已保存的 DeepSeek 余额…"; message.Text = (await CompanionCloud.QueryBalance()).Detail; }
+            finally { balance.IsEnabled = true; }
+        };
+        panel.Children.Add(balance);
+        panel.Children.Add(new TextBlock
+        {
+            Text = "只读取已保存的 DeepSeek 账户余额，不发送对话，也不产生模型费用。",
+            Foreground = Brushes.SlateGray,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 4)
+        });
     }
 
     private void ActivateCompanionSettings(Window window)

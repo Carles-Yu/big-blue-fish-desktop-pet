@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -45,6 +45,8 @@ public static class ControlTools
         }}}
         """;
     public static object[] Definitions => [
+        Tool("notify_task", "Windows：通知用户某个任务已完成或失败。title应包含项目或任务名称；只在真实结束后调用，不把阶段结束当成整个任务完成。显示鱼鱼气泡并请求系统托盘提醒，不调用模型；accepted不表示用户已读。", """{"title":{"type":"string","minLength":1,"maxLength":120},"message":{"type":"string","minLength":1,"maxLength":2000},"status":{"type":"string","enum":["completed","failed"]}}""", ["title", "message", "status"]),
+        Tool("ask_user", "Windows：在鱼鱼附近向真实用户提出一个问题，提供可选的单选项与自由填写框，等待提交后把答案仅返回本次调用。不要用于密码、令牌或其他秘密。关闭窗口返回cancelled；超时返回expired；都不能当作同意。请按宿主能力设置足够的工具超时；连接断开或取消会关闭问题。用户提交前不可自行替用户选择。不要求开启McpChatEnabled或提线木偶模式。", """{"title":{"type":"string","minLength":1,"maxLength":120},"question":{"type":"string","minLength":1,"maxLength":4000},"options":{"type":"array","maxItems":8,"items":{"type":"string","minLength":1,"maxLength":200}},"timeout_seconds":{"type":"integer","minimum":15,"maximum":600,"default":300}}""", ["title", "question"]),
         Tool("get_settings", "读取settings与state。McpEnabled只读，其余可写字段和范围见update_settings的schema。state是运行快照，不可写；modelAvailable仅表示模型文件可用，不等于推理服务已加载就绪。content[0].text为JSON字符串。", "{}"),
         Tool("update_settings", "按字段修改设置并尝试保存；省略字段保留，空对象也会走应用设置流程。先验证整个补丁，字段或用户确认失败时不应用。不会打开或激活设置窗口。Windows按相关字段停止模型或重排计时；Linux每次应用都会停止模型并重排计时。修改前先读状态；超时、取消或IO错误后先读回，勿盲目重试。启用PuppetMode须等待真实用户确认；本工具不能修改McpEnabled。", SettingsInput, ["settings"]),
         Tool("list_actions", "列出106个动作的精确action名称、pool、基础weight与名义duration_seconds。复制action原文传给动作工具；分类和权重是自主调度元数据，Disabled动作也可外部指定。名义时长不是完成通知。", "{}"),

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -46,14 +46,7 @@ internal sealed class CompanionTrayMenu : ContextMenuStrip
             previous?.Dispose();
         }
         Padding = new Padding((int)(7 * scale));
-        foreach (ToolStripItem item in Items)
-        {
-            var text = TextRenderer.MeasureText(item.Text, Font);
-            item.AutoSize = false;
-            item.Margin = new Padding(0, (int)(2 * scale), 0, (int)(2 * scale));
-            item.Size = new Size(Math.Max((int)(194 * scale), text.Width + (int)(66 * scale)),
-                Math.Max((int)(38 * scale), text.Height + (int)(16 * scale)));
-        }
+        SizeItems(Items, Font, scale);
         int width = 0, height = Padding.Vertical;
         foreach (ToolStripItem item in Items)
         {
@@ -61,6 +54,34 @@ internal sealed class CompanionTrayMenu : ContextMenuStrip
             height += item.Height + item.Margin.Vertical;
         }
         MinimumSize = new Size(width + Padding.Horizontal, height);
+    }
+
+    internal void PrepareQuotaMenu(ToolStripMenuItem quota)
+    {
+        if (quota.DropDown is not ToolStripDropDownMenu drop) return;
+        drop.ShowImageMargin = false;
+        drop.ShowCheckMargin = false;
+        drop.Renderer = Renderer;
+        drop.BackColor = Color.White;
+        drop.ForeColor = ForeColor;
+        drop.Opening += (_, _) =>
+        {
+            drop.Font = Font;
+            SizeItems(drop.Items, Font, DeviceDpi / 96f);
+        };
+    }
+
+    private static void SizeItems(ToolStripItemCollection items, Font font, float scale)
+    {
+        foreach (ToolStripItem item in items)
+        {
+            var text = TextRenderer.MeasureText(item.Text, font);
+            int extra = item is ToolStripMenuItem { HasDropDownItems: true } ? (int)(18 * scale) : 0;
+            item.AutoSize = false;
+            item.Margin = new Padding(0, (int)(2 * scale), 0, (int)(2 * scale));
+            item.Size = new Size(Math.Max((int)(194 * scale), text.Width + (int)(66 * scale) + extra),
+                Math.Max((int)(38 * scale), text.Height + (int)(16 * scale)));
+        }
     }
 
     protected override void Dispose(bool disposing)
@@ -132,15 +153,25 @@ internal sealed class CompanionTrayMenuRenderer : ToolStripProfessionalRenderer
     {
         float scale = (e.ToolStrip?.DeviceDpi ?? 96) / 96f;
         var flags = TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix;
-        if (e.Item.Tag is string glyph)
+        if (e.Item.Tag is CompanionBrand brand)
+        {
+            var previous = e.Graphics.InterpolationMode;
+            e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            int side = (int)(17 * scale);
+            e.Graphics.DrawImage(CompanionBrandIcons.Tray(brand), new Rectangle((int)(15 * scale), (e.Item.Height - side) / 2, side, side));
+            e.Graphics.InterpolationMode = previous;
+        }
+        else if (e.Item.Tag is string glyph)
         {
             using var iconFont = new Font("Segoe MDL2 Assets", 16 * scale, GraphicsUnit.Pixel);
             TextRenderer.DrawText(e.Graphics, glyph, iconFont,
                 new Rectangle((int)(12 * scale), 0, (int)(24 * scale), e.Item.Height),
                 Color.FromArgb(80, 96, 152), flags);
         }
+        int textWidth = e.Item.Width - (int)(56 * scale);
+        if (e.Item is ToolStripMenuItem { HasDropDownItems: true }) textWidth -= (int)(18 * scale);
         TextRenderer.DrawText(e.Graphics, e.Text, e.Item.Font,
-            new Rectangle((int)(44 * scale), 0, e.Item.Width - (int)(56 * scale), e.Item.Height),
+            new Rectangle((int)(44 * scale), 0, Math.Max(0, textWidth), e.Item.Height),
             e.Item.Enabled ? Color.FromArgb(49, 64, 94) : SystemColors.GrayText, flags);
     }
 }

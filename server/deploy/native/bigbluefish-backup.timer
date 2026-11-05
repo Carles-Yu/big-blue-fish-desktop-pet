@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Big Blue Fish database backup
+
+[Timer]
+OnCalendar=*-*-* 04:15:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <Import Project="../../deployment/SharedItems.props" />
   <PropertyGroup>
     <TargetFramework>net10.0-windows7.0</TargetFramework>
@@ -25,8 +25,14 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.12" />
+    <PackageReference Include="Tomlyn" Version="0.19.0" Condition="'$(CompanionEdition)' != 'Safe'" />
     <ProjectReference Include="../BigBlueFish.Control/BigBlueFish.Control.csproj" Condition="'$(CompanionEdition)' != 'Safe'" />
+    <ProjectReference Include="../BigBlueFish.Memory/BigBlueFish.Memory.csproj" />
     <Resource Include="Res/Font/LemiXiaoNaiPaoTi.ttf" />
+    <Resource Include="assets/brands/*.png" />
+    <Resource Include="assets/settings/*.png" />
+    <Resource Include="assets/brands/*.svg" />
     <None Update="BigBlueFish.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="assets/fish/**/*" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="media/ffmpeg.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

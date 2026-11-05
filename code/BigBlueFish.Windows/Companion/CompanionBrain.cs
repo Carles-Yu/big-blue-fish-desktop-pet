@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Collections.Generic;
 using System.IO;
@@ -30,6 +30,7 @@ internal sealed class CompanionBrain : IDisposable
     private CompanionCloud.Settings? lastCloudSettings;
     internal string LastCloudResult { get; private set; } = "尚未验证";
     internal bool UseCloud { get; set; }
+    internal Func<string, bool, string, string>? MemoryContext { get; set; }
     internal bool StopCloudOnBattery { get; set; }
     internal string PowerPauseReason => UseCloud ? "电池供电 · 已暂停云端调用" : "电池供电 · 已暂停本地模型";
     internal string CloudResult(CompanionCloud.Settings? settings) => settings != null && settings == lastCloudSettings ? LastCloudResult : "尚未验证";
@@ -163,7 +164,7 @@ internal sealed class CompanionBrain : IDisposable
     internal sealed record ChatMessage(string role, object content);
     internal static string FixedSpeechInstructions(string persona) => persona
         + "\n本次只说鱼鱼最想说的那一小句，一个自然可爱的小反应就好。\n";
-    internal static ChatMessage[] BuildMessages(string persona, string request, CompanionWindowImage? image = null)
+    internal static ChatMessage[] BuildMessages(string persona, string request, CompanionWindowImage? image = null, ChatMessage[]? prior = null)
     {
         if (persona == Persona || persona == OcrPersona)
             persona = FixedSpeechInstructions(persona) + CompanionDialogue.ReactionHint();
@@ -172,9 +173,12 @@ internal sealed class CompanionBrain : IDisposable
             new { type = "image_url", image_url = new { url = image.DataUrl } },
             new { type = "text", text = request }
         };
-        return [new("system", persona), new("user", content)];
+        var messages = new List<ChatMessage> { new("system", persona) };
+        if (prior != null) messages.AddRange(prior);
+        messages.Add(new("user", content));
+        return messages.ToArray();
     }
-    internal static string Clean(string text)
+    internal static string Clean(string text, int limit = 100)
     {
         text = Regex.Replace(text, @"<think>[\s\S]*?</think>", "", RegexOptions.IgnoreCase);
         if (text.Contains("<think>", StringComparison.OrdinalIgnoreCase))
@@ -183,9 +187,10 @@ internal sealed class CompanionBrain : IDisposable
         var runes = text.EnumerateRunes().ToArray();
         if (!Regex.IsMatch(text, @"[\p{L}\p{N}]") || Regex.IsMatch(text, @"(.)\1{8}"))
             return "";
-        if (runes.Length < 100)
+        if (runes.Length < limit)
             return text;
-        var shortText = string.Concat(runes.Take(98).Select(x => x.ToString()));
+        var shortText = string.Concat(runes.Take(Math.Max(1, limit - 2)).Select(x => x.ToString()));
+        if (limit > 200) return shortText + "…";
         var end = shortText.LastIndexOfAny(new[] { '。', '！', '？', '～' });
         return end >= 15 ? shortText[..(end + 1)] : shortText + "…";
     }
@@ -423,7 +428,7 @@ internal sealed class CompanionBrain : IDisposable
             if (!cloud)
                 await EnsureRunner(token);
             Status = "正在生成天气播报";
-            var text = await Complete(WeatherPersona, WeatherRequest(context), CompanionDialogue.Temperature, token, cloudConfig, onPartial: onPartial);
+            var text = await Complete(WeatherPersona, AttachMemory(WeatherRequest(context), cloud, "weather"), CompanionDialogue.Temperature, token, cloudConfig, onPartial: onPartial);
             Status = cloud ? "云端模型就绪" : ReadyStatus("本地模型就绪");
             return CanRunOnCurrentPower ? text : "";
         }
@@ -442,12 +447,59 @@ internal sealed class CompanionBrain : IDisposable
         }
     }
 
-    private async Task<string> Complete(string persona, string request, double temperature, CancellationToken token, CompanionCloud.Settings? cloud, CompanionWindowImage? image = null, Action<string>? onPartial = null)
+    internal async Task<string> ChatReply(string userText, IReadOnlyList<(string Role, string Content)> history, CancellationToken token, bool webSearch = false, Action<string>? searchStatus = null)
+    {
+        if (Busy || !CanRunOnCurrentPower) return "";
+        Busy = true;
+        cancelledByUser = false;
+        active = CancellationTokenSource.CreateLinkedTokenSource(token);
+        active.CancelAfter(TimeSpan.FromSeconds(100));
+        try
+        {
+            var cloudConfig = UseCloud ? cloudSettings() : null;
+            if (cloudConfig == null) await EnsureRunner(active.Token);
+            var prior = history.TakeLast(6).Select(item => new ChatMessage(item.Role, item.Content)).ToArray();
+            var persona = BasePersona + "\n这是和主人的对话。不知道的事情就说不记得，不要编共同经历。";
+            Status = cloudConfig == null ? "本地对话" : "云端对话";
+            LastSearchSources.Clear();
+            var request = AttachMemory(userText, cloudConfig != null, "chat");
+            var text = webSearch && cloudConfig != null && IsOfficialSearchConfig(cloudConfig)
+                ? await CompanionChatSearch.Run(cloudHttp, cloudConfig, persona, request, prior, LastSearchSources, searchStatus, active.Token)
+                : await Complete(persona, request, .7, active.Token, cloudConfig, null, null, 480, true, prior);
+            Status = cloudConfig == null ? ReadyStatus("本地模型就绪") : "云端模型就绪";
+            return CanRunOnCurrentPower ? text : "";
+        }
+        catch (OperationCanceledException) { Status = cancelledByUser ? "对话已取消" : "对话超时"; return ""; }
+        catch (Exception e) { Status = e is IOException ? e.Message : "暂时无法对话"; return ""; }
+        finally { Busy = false; active?.Dispose(); active = null; if (!CanRunOnCurrentPower) StopRunner(); }
+    }
+
+    internal readonly List<SearchSource> LastSearchSources = new();
+    internal bool SearchAvailable()
+    {
+        try { return UseCloud && IsOfficialSearchConfig(cloudSettings()); } catch { return false; }
+    }
+    private static bool IsOfficialSearchConfig(CompanionCloud.Settings config) =>
+        Uri.TryCreate(config.BaseUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps
+        && uri.Host.Equals("api.deepseek.com", StringComparison.OrdinalIgnoreCase) && uri.IsDefaultPort;
+
+    string AttachMemory(string request, bool cloud, string kind)
+    {
+        if (MemoryContext == null) return request;
+        try
+        {
+            var extra = MemoryContext(request, cloud, kind);
+            return string.IsNullOrWhiteSpace(extra) ? request : request + "\n" + extra;
+        }
+        catch (Exception) { return request; }
+    }
+
+    private async Task<string> Complete(string persona, string request, double temperature, CancellationToken token, CompanionCloud.Settings? cloud, CompanionWindowImage? image = null, Action<string>? onPartial = null, int? maxTokensOverride = null, bool longForm = false, ChatMessage[]? prior = null)
     {
         if (cloud != null) { lastCloudSettings = cloud; LastCloudResult = "请求中"; }
         try
         {
-            var result = await CompleteRequest(persona, request, temperature, token, cloud, image, onPartial);
+            var result = await CompleteRequest(persona, request, temperature, token, cloud, image, onPartial, maxTokensOverride, longForm, prior);
             token.ThrowIfCancellationRequested();
             if (cloud != null)
             {
@@ -476,11 +528,11 @@ internal sealed class CompanionBrain : IDisposable
         }
     }
 
-    private async Task<string> CompleteRequest(string persona, string request, double temperature, CancellationToken token, CompanionCloud.Settings? cloud, CompanionWindowImage? image = null, Action<string>? onPartial = null)
+    private async Task<string> CompleteRequest(string persona, string request, double temperature, CancellationToken token, CompanionCloud.Settings? cloud, CompanionWindowImage? image = null, Action<string>? onPartial = null, int? maxTokensOverride = null, bool longForm = false, ChatMessage[]? prior = null)
     {
-        var messages = BuildMessages(persona, request, cloud == null ? image : null);
+        var messages = BuildMessages(persona, request, cloud == null ? image : null, prior);
         LastTimings = null;
-        int maxTokens = persona == NewsPersona ? 160 : persona == WeatherPersona ? 220 : 180;
+        int maxTokens = maxTokensOverride ?? (persona == NewsPersona ? 160 : persona == WeatherPersona ? 220 : 180);
         object payload = cloud == null
             ? new
             {
@@ -527,7 +579,7 @@ internal sealed class CompanionBrain : IDisposable
         {
             using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
             if (document.RootElement.TryGetProperty("timings", out var timings)) LastTimings = timings.Clone();
-            return Clean(document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "");
+            return Clean(document.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString() ?? "", longForm ? 800 : 100);
         }
 
         using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(token));
@@ -568,7 +620,7 @@ internal sealed class CompanionBrain : IDisposable
         }
 
         if (cloud != null && !streamCompleted) throw new CloudResponseException("云端流式响应中断或格式错误");
-        var result = Clean(raw.ToString());
+        var result = Clean(raw.ToString(), longForm ? 800 : 100);
         if (cloud != null && result.Length == 0) throw new CloudResponseException("云端响应格式错误或内容为空");
         return result;
     }
@@ -669,6 +721,7 @@ internal sealed class CompanionBrain : IDisposable
 #endif
             }
 
+            request = AttachMemory(request, cloud, news != null ? "news" : "companion");
             if (!cloud)
                 await EnsureRunner(token);
             runnerReadyMs = generationWatch.Elapsed.TotalMilliseconds;

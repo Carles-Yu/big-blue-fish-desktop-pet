@@ -9,7 +9,7 @@ async def main():
             init=await session.initialize()
             assert init.server_info.name=='BigBlueFish'
             tools=await session.list_tools()
-            assert len(tools.tools)==9
+            assert len(tools.tools)==11
             settings=await session.call_tool('get_settings',{})
             assert not settings.is_error
             actual=json.loads(settings.content[0].text)
@@ -24,7 +24,7 @@ async def main():
             denied=await session.call_tool('update_settings',{'settings':{'McpEnabled':False}})
             assert denied.is_error
             await session.send_ping()
-            print('Official Python MCP SDK: initialize, 9 tools, settings, 106 actions, literal speech, PNG image, protected switch and ping passed.')
+            print('Official Python MCP SDK: initialize, 11 tools, settings, 106 actions, literal speech, PNG image, protected switch and ping passed.')
 
 asyncio.run(main())
 

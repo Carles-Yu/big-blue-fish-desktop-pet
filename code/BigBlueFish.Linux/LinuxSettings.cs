@@ -24,13 +24,33 @@ internal sealed partial class LinuxPetWindow
         Directory.CreateDirectory(Path.GetDirectoryName(AutostartFile)!);
         File.WriteAllText(AutostartFile, "[Desktop Entry]\nType=Application\nName=蓝色大肥鱼\nExec=\"" + Path.Combine(AppContext.BaseDirectory, "BigBlueFish.Linux").Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"\nTerminal=false\n");
     }
+    CompanionSettingsSnapshot appliedSettings = null!;
+    CompanionCloud.Settings? appliedCloud;
     void ApplySettings(PixelPoint? requestedPosition = null)
     {
-        speechVersion++; brain.Stop(); loading.IsVisible = false; if (modelReply) { typing = false; bubbleWindow.Hide(); } brain.UseCloud = Preferences.CloudSelected; brain.StopCloudOnBattery = Preferences.StopCloudOnBattery; brain.RefreshModelAvailability(); brain.UseGpu = Preferences.GpuEnabled; brain.StopOnBattery = Preferences.StopModelOnBattery; brain.WeatherRegionCode = Preferences.WeatherRegionCode;
-        Rescale(); var appliedPosition = Clamp(requestedPosition); nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random)); nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds); nextWarmup = DateTime.MinValue;
+        var before = appliedSettings;
+        var after = CompanionSettingsSnapshot.From(Preferences);
+        var cloud = CompanionCloud.TryLoad();
+        bool stop = before.MustStop(after, CompanionNative.OnAC, appliedCloud != cloud);
+        if (stop) {
+            speechVersion++; brain.Stop(); loading.IsVisible = false;
+            if (modelReply && !externalSpeech) { typing = false; bubbleWindow.Hide(); }
+        }
+        brain.UseCloud = Preferences.CloudSelected; brain.StopCloudOnBattery = Preferences.StopCloudOnBattery;
+        if (before.Cloud != after.Cloud || appliedCloud != cloud) brain.RefreshModelAvailability();
+        brain.UseGpu = Preferences.GpuEnabled; brain.StopOnBattery = Preferences.StopModelOnBattery; brain.WeatherRegionCode = Preferences.WeatherRegionCode;
+        if (before.Scale != after.Scale) Rescale();
+        if (before.BubbleScale != after.BubbleScale) MoveBubble();
+        var appliedPosition = Clamp(requestedPosition);
+        if (before.Speech != after.Speech || before.Cloud != after.Cloud || before.Enabled != after.Enabled)
+            nextSpeech = DateTime.UtcNow.Add(Preferences.NextSpeechDelay(random));
+        if (before.Animation != after.Animation || before.Breakfast != after.Breakfast || before.Lunch != after.Lunch || before.Dinner != after.Dinner)
+            nextEvent = DateTime.UtcNow.AddSeconds(Preferences.AnimationIntervalSeconds);
+        if (stop || !before.Enabled && after.Enabled || !before.AllowsPower(CompanionNative.OnAC) && after.AllowsPower(CompanionNative.OnAC)) nextWarmup = DateTime.MinValue;
         if (!Preferences.HideOnFullscreen && fullscreenHidden) { fullscreenHidden = false; if (!hidden) Show(); }
-        if (bubbleWindow.IsVisible) ResetDwell();
-        Preferences.Left = appliedPosition.X; Preferences.Top = appliedPosition.Y; Preferences.Save();
+        if (before.Dwell != after.Dwell && bubbleWindow.IsVisible) ResetDwell();
+        appliedSettings = after; appliedCloud = cloud;
+        Preferences.Left = appliedPosition.X; Preferences.Top = appliedPosition.Y;
     }
     static Button ActionButton(string label, Action action)
     {
@@ -123,6 +143,13 @@ internal sealed partial class LinuxPetWindow
                 try { cloudMessage.Text = "正在测试…"; cloudMessage.Text = await brain.TestCloudConnection(); }
                 finally { testing = false; }
             }));
+            var checkingBalance = false;
+            body.Children.Add(ActionButton("查询 DeepSeek 余额", async () => {
+                if (checkingBalance) return; checkingBalance = true;
+                try { cloudMessage.Text = "正在查询已保存的 DeepSeek 余额…"; cloudMessage.Text = (await CompanionCloud.QueryBalance()).Detail; }
+                finally { checkingBalance = false; }
+            }));
+            body.Children.Add(Paragraph("只读取已保存的 DeepSeek 账户余额，不发送对话，也不产生模型费用。"));
             var runtime = Paragraph(""); body.Children.Add(runtime);
             var statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
             void RefreshStatus() { runtime.Text = (Preferences.CloudSelected ? "云端模型：" + (CompanionCloud.TryLoad()?.Model ?? "未配置 Key") + " · " + brain.CloudResult(CompanionCloud.TryLoad()) : "本地模型") + "\n" + (brain.CanRunOnCurrentPower ? "当前供电允许运行" : brain.PowerPauseReason) + "\n运行状态：" + brain.Status; }
@@ -158,9 +185,10 @@ internal sealed partial class LinuxPetWindow
             }
         }
         void About() {
-            Title("关于与更新"); body.Children.Add(Paragraph("蓝色大肥鱼 " + typeof(LinuxPetWindow).Assembly.GetName().Version!.ToString(3) + (McpAvailable ? "" : " · 无MCP版")));
+            Title("关于与更新"); body.Children.Add(Paragraph(BigBlueFish.Deployment.ReleaseIdentity.Description));
             Toggle("每次启动自动检查更新", Preferences.CheckUpdatesOnStartup, value => Preferences.CheckUpdatesOnStartup = value);
-            body.Children.Add(ActionButton("检查更新", async () => await CheckUpdates(true)));
+            var checkStatus = Paragraph(updateStatus); body.Children.Add(checkStatus);
+            body.Children.Add(ActionButton("检查更新", async () => { await CheckUpdates(true); checkStatus.Text = updateStatus; }));
         }
         navigation.Children.Add(ActionButton("桌宠与显示", () => Navigate(General))); navigation.Children.Add(ActionButton("模型与信息", () => Navigate(Model))); navigation.Children.Add(ActionButton("动作与作息", () => Navigate(Animation)));
 #if !COMPANION_SAFE
@@ -178,10 +206,23 @@ internal sealed partial class LinuxPetWindow
             void Preview(string name, string text) { body.Children.Add(new TextBlock { Text = name, Margin = new Thickness(0, 6, 0, 4) }); body.Children.Add(new TextBox { Text = text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 64 }); }
             Preview("桥接程序", CompanionClientConfig.BridgePath); Preview("Cursor", CompanionClientConfig.CursorJson); Preview("Codex", CompanionClientConfig.CodexToml);
             var clientMessage = Paragraph("");
+            body.Children.Add(Paragraph("配置文件路径（可修改）"));
+            var cursorPath = new TextBox { Text = CompanionClientConfig.CursorPath }; body.Children.Add(cursorPath);
+            var codexPath = new TextBox { Text = CompanionClientConfig.CodexPath }; body.Children.Add(codexPath);
+            bool savingClient = false;
+            async Task WriteClient(string path, bool codex) {
+                if (savingClient) return; savingClient = true;
+                try {
+                    var change = CompanionClientConfig.Prepare(path, codex);
+                    if (!change.Changed) { clientMessage.Text = "已配置，无需改动。"; return; }
+                    if (await Confirm("预览 MCP 配置修改", change.Preview, "备份并保存")) clientMessage.Text = CompanionClientConfig.Save(change);
+                } catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { clientMessage.Text = error.Message; }
+                finally { savingClient = false; }
+            }
             body.Children.Add(ActionButton("复制 Cursor 配置", async () => { if (settings?.Clipboard != null) await settings.Clipboard.SetTextAsync(CompanionClientConfig.CursorJson); clientMessage.Text = "Cursor 配置已复制。"; }));
-            body.Children.Add(ActionButton("写入 Cursor", () => { try { CompanionClientConfig.WriteCursor(); clientMessage.Text = "已写入 " + CompanionClientConfig.CursorPath; } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { clientMessage.Text = error.Message; } }));
+            body.Children.Add(ActionButton("写入 Cursor", async () => await WriteClient(cursorPath.Text ?? "", false)));
             body.Children.Add(ActionButton("复制 Codex 配置", async () => { if (settings?.Clipboard != null) await settings.Clipboard.SetTextAsync(CompanionClientConfig.CodexToml); clientMessage.Text = "Codex 配置已复制。"; }));
-            body.Children.Add(ActionButton("写入 Codex", () => { try { CompanionClientConfig.WriteCodex(); clientMessage.Text = "已写入 " + CompanionClientConfig.CodexPath; } catch (Exception error) when (error is IOException or UnauthorizedAccessException) { clientMessage.Text = error.Message; } }));
+            body.Children.Add(ActionButton("写入 Codex", async () => await WriteClient(codexPath.Text ?? "", true)));
             body.Children.Add(clientMessage);
             enabled.Click += async (_, _) => {
                 bool on = enabled.IsChecked == true;
@@ -193,6 +234,27 @@ internal sealed partial class LinuxPetWindow
         }
         navigation.Children.Add(ActionButton("Agent 与 MCP", () => Navigate(Agent)));
 #endif
+        void MemoryPage()
+        {
+            Title("鱼鱼的记忆");
+            body.Children.Add(Paragraph("默认关闭。打开后只保存你明确写下的内容。屏幕、新闻和 Agent 的话不会变成记忆。同步另外开启，服务器只保存密文。"));
+            Toggle("启用本地记忆", Preferences.MemoryEnabled, value => { Preferences.MemoryEnabled = value; try { EnsureLinuxMemory().Enabled = value; } catch (Exception error) { _ = Confirm("记忆还没准备好", error.Message); } });
+            Toggle("启用同步", Preferences.SyncEnabled, value => { Preferences.SyncEnabled = value; try { var memory = EnsureLinuxMemory(); memory.SyncEnabled = value; memory.ServerUrl = Preferences.SyncServerUrl; } catch (Exception error) { _ = Confirm("同步还没准备好", error.Message); } });
+            body.Children.Add(new TextBlock { Text = "同步地址", Margin = new Thickness(0, 8, 0, 4) });
+            var server = new TextBox { Text = Preferences.SyncServerUrl ?? "", HorizontalAlignment = HorizontalAlignment.Stretch };
+            body.Children.Add(server);
+            if (!OperatingSystem.IsWindows())
+            {
+                body.Children.Add(new TextBlock { Text = "Linux 同步口令（只留在这次运行里，用来加密本机密钥）", Margin = new Thickness(0, 8, 0, 4) });
+                var pass = new TextBox { PasswordChar = '●' };
+                pass.TextChanged += (_, _) => { if (companionMemory != null) companionMemory.Passphrase = pass.Text; };
+                body.Children.Add(pass);
+            }
+            body.Children.Add(ActionButton("保存同步地址", () => { Preferences.SyncServerUrl = server.Text?.Trim(); Save(); try { if (companionMemory != null) companionMemory.ServerUrl = Preferences.SyncServerUrl; } catch (Exception) { } }));
+            body.Children.Add(ActionButton("打开记忆本", OpenLinuxMemory));
+            body.Children.Add(ActionButton("与鱼鱼聊天", OpenLinuxChat));
+        }
+        navigation.Children.Add(ActionButton("鱼鱼的记忆", () => Navigate(MemoryPage)));
         navigation.Children.Add(ActionButton("关于与更新", () => Navigate(About)));
         refreshLinuxSettings = () => { var offset = scroll.Offset; selectedPage(); scroll.Offset = offset; };
         General(); settings.Show(); settings.Activate();

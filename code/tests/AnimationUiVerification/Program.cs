@@ -127,13 +127,13 @@ internal static class Program
     {
         var menu=(ContextMenu)Read(w,"companionContextMenu");
         var items=menu.Items.Cast<MenuItem>().ToArray();
-        Check(items.Select(i=>i.Header?.ToString()).SequenceEqual(new[]{"设置","天气","吐字测试","隐藏桌宠"}),"pet menu retains its four actions");
+        Check(items.Select(i=>i.Header?.ToString()).SequenceEqual(new[]{"设置","天气","吐字测试","看看余额","隐藏桌宠","安静一小时","额度查询"}),"pet menu keeps settings, weather, speech, balance, hide, quiet and quota");
         menu.IsOpen=true;Pump(120);menu.UpdateLayout();
         var dismissal=Read(w,"companionMenuDismissal");
         Check(Property<bool>(dismissal,"IsListening"),"outside-click observer attaches only while menu is open");
         Invoke(dismissal,"DismissOutside",menu.PointToScreen(new Point(menu.ActualWidth/2,menu.ActualHeight/2)));Pump();
         Check(menu.IsOpen,"pointer inside menu does not dismiss it");
-        Invoke(dismissal,"DismissOutside",menu.PointToScreen(new Point(-20,-20)));Pump();
+        Invoke(dismissal,"DismissOutside",menu.PointToScreen(new Point(-20,-20)));Pump(400);
         Check(!menu.IsOpen&&!Property<bool>(dismissal,"IsListening"),"outside pointer closes menu and detaches observer");
         menu.IsOpen=true;Pump();
         Check(Property<bool>(dismissal,"IsListening"),"reopening menu reattaches observer");
@@ -143,6 +143,15 @@ internal static class Program
         Check(items.All(i=>i.ActualHeight>=38&&i.Icon is TextBlock {Text.Length:1}),"all menu actions have full-height rows and system vector icons");
         var rows=items.Select(i=>i.TransformToAncestor(menu).TransformBounds(new Rect(0,0,i.ActualWidth,i.ActualHeight))).ToArray();
         Check(rows.Zip(rows.Skip(1)).All(pair=>pair.First.Bottom<=pair.Second.Top+.1),"menu rows do not overlap");
+        var quota=items.Single(i=>i.Header?.ToString()=="额度查询");
+        Check(quota.Items.Cast<MenuItem>().Select(i=>i.Header?.ToString()).SequenceEqual(new[]{"Codex","Cursor"}),"quota submenu lists Codex then Cursor");
+        quota.IsSubmenuOpen=true;Pump(150);
+        var popup=quota.Template.FindName("SubmenuPopup", quota) as System.Windows.Controls.Primitives.Popup;
+        var popupChild=popup?.Child as FrameworkElement;
+        Check(popup is {IsOpen:true}&&popupChild!=null&&popupChild.ActualWidth>=148,"quota submenu popup opens");
+        Invoke(dismissal,"DismissOutside",popupChild!.PointToScreen(new Point(popupChild.ActualWidth/2,popupChild.ActualHeight/2)));Pump();
+        Check(menu.IsOpen,"pointer inside quota submenu does not dismiss the menu");
+        quota.IsSubmenuOpen=false;Pump();
         Render(menu,"menu-normal.png",(int)Math.Ceiling(menu.ActualWidth),(int)Math.Ceiling(menu.ActualHeight));
         items[0].Focus();Pump(80);
         Render(menu,"menu-focused.png",(int)Math.Ceiling(menu.ActualWidth),(int)Math.Ceiling(menu.ActualHeight));
@@ -150,15 +159,17 @@ internal static class Program
         Check(!menu.IsOpen&&Read(w,"companionSettings") is Window {IsVisible:true},"styled settings action opens actual settings and dismisses menu");
         ((Window)Read(w,"companionSettings")).Close();
         menu.IsOpen=true;Pump();items[1].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));Pump();
-        Check(!menu.IsOpen&&((TextBlock)Read(w,"bubbleText")).Text.Contains("启用本地大模型"),"weather action retains model-off behavior");
+        Check(!menu.IsOpen&&((TextBlock)Read(w,"bubbleText")).Text.Contains("启用 AI 陪伴"),"weather action retains model-off behavior");
         menu.IsOpen=true;Pump();items[2].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));Pump();
         Check(!menu.IsOpen&&((TextBlock)Read(w,"bubbleText")).Text.Contains("当前设置暂停了模型"),"speech test action retains model-off behavior");
-        menu.IsOpen=true;Pump();items[3].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));Pump();
+        menu.IsOpen=true;Pump();items[4].RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));Pump();
         Check(!w.IsVisible&&(bool)Read(w,"hiddenByUser"),"styled hide action uses existing hide lifecycle");
         Invoke(w,"RestoreCompanion");Pump();Check(w.IsVisible&&!(bool)Read(w,"hiddenByUser"),"existing restore still works");
         var tray=(System.Windows.Forms.ContextMenuStrip)((CompanionTrayIcon)Read(w,"notifyIcon")).ContextMenuStrip!;
         Check(tray.Renderer.GetType().Name=="CompanionTrayMenuRenderer"&&!tray.ShowImageMargin,"tray uses matching palette without obsolete image gutter");
-        Check(tray.Items.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>i.Text).SequenceEqual(new[]{"显示桌宠","设置","天气","吐字测试","关闭桌宠"}),"tray retains all original actions");
+        Check(tray.Items.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>i.Text).SequenceEqual(new[]{"显示桌宠","设置","天气","吐字测试","关闭桌宠","安静一小时","额度查询"}),"tray retains display, settings, weather, speech, close, quiet and quota");
+        var trayQuota=(System.Windows.Forms.ToolStripMenuItem)tray.Items[tray.Items.Count-1];
+        Check(trayQuota.DropDownItems.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>i.Text).SequenceEqual(new[]{"Codex","Cursor"}),"tray quota submenu lists Codex then Cursor");
         tray.Show(new System.Drawing.Point(500,300));System.Windows.Forms.Application.DoEvents();
         Console.WriteLine($"TRAY_METRICS dpi={tray.DeviceDpi} font={tray.Font.Size}/{tray.Font.Unit} size={tray.Size} client={tray.ClientSize} items="+string.Join(";",tray.Items.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>$"{i.Text}:{i.Bounds},font={i.Font.Size}")));
         Check(tray.GetType().Name=="CompanionTrayMenu"&&tray.Region!=null

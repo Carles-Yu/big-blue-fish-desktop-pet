@@ -26,6 +26,7 @@ internal static class UpdateTransaction
         var p = relative.Replace('\\', '/');
         return p.StartsWith("models/", StringComparison.OrdinalIgnoreCase) || p.StartsWith("cache/", StringComparison.OrdinalIgnoreCase)
             || p.StartsWith("preferences.json", StringComparison.OrdinalIgnoreCase) || p.StartsWith("model-selection.json", StringComparison.OrdinalIgnoreCase)
+            || p.Equals("cloud.json", StringComparison.OrdinalIgnoreCase)
             || p is "companion.lock" or "ready.status" or "news-last-day.txt" or "companion-errors.log"
             || p.StartsWith("test-") || p is "ocr-status.json" or "vision-status.json" or "vision-input.jpg" or "model-request.json";
     }

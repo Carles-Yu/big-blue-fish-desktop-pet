@@ -3,6 +3,9 @@ set -euo pipefail
 root=$(realpath "$1"); work=$(realpath "$2"); runtime=$(realpath "$3"); output=$(realpath "$4"); version=$5; edition=$6
 [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 [[ $edition == Standard || $edition == Safe ]]
+maintainer=$(sed -n 's/.*<MaintenanceAccount>\(.*\)<\/MaintenanceAccount>.*/\1/p' "$root/Version.props" | tr -d '\r')
+repository=$(sed -n 's/.*<RepositoryUrl>\(.*\)<\/RepositoryUrl>.*/\1/p' "$root/Version.props" | tr -d '\r')
+[[ -n "$maintainer" && -n "$repository" ]]
 payload="$work/payload"
 mkdir -p "$payload/runtime"
 cp -a "$runtime/llama-server" "$payload/runtime/"
@@ -30,12 +33,12 @@ Version: $version
 Section: games
 Priority: optional
 Architecture: amd64
-Maintainer: Bai-Cute <Bai-Cute@users.noreply.github.com>
+Maintainer: $maintainer <$maintainer@users.noreply.github.com>
 Depends: libc6 (>= 2.35), libstdc++6, libgcc-s1, libgomp1, libssl3, libicu74 | libicu72 | libicu76 | libicu78, libfontconfig1, libfreetype6, libx11-6, libxcomposite1, libxext6, libxss1, libxi6, libxcursor1, libxrandr2, libxrender1, libice6, libsm6, libdbus-1-3, libvulkan1, ffmpeg, tesseract-ocr, tesseract-ocr-chi-sim, tesseract-ocr-eng, fonts-noto-cjk, xdg-utils, pkexec | policykit-1
 Recommends: xdg-desktop-portal, xdg-desktop-portal-gtk
 Conflicts: $conflict
 Replaces: $conflict
-Homepage: https://github.com/Bai-Cute/big-blue-fish-desktop-pet
+Homepage: $repository
 Description: Big Blue Fish desktop companion
  Animated local-model desktop companion with OCR and seasonal actions.
 EOF

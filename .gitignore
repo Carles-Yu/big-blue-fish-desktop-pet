@@ -31,3 +31,4 @@ cloud.json
 !/release/README.md
 /AGENTS.md
 /docs/LOCAL_GIT_HANDOFF.md
+/server/deploy/.env

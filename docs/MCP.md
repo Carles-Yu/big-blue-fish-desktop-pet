@@ -1,4 +1,4 @@
-# 蓝色大肥鱼 1.0.0 MCP 接入参考
+﻿# 蓝色大肥鱼 1.0.0 MCP 接入参考
 
 本文面向连接蓝色大肥鱼的桌面 Agent 与客户端开发者，说明当前实现的参数、返回值、调度关系、权限和错误处理。程序完整行为见[当前功能规格](AGENT_FUNCTIONAL_SPEC.md)。接口名称、设置名称和动作名称均区分大小写。工具的 `inputSchema` 同时向客户端提供字段类型与范围。
 
@@ -35,7 +35,7 @@ MCP 开启期间，连接者可以取得屏幕截图、读取和修改允许的�
 {"name":"update_settings","arguments":{"settings":{"AnimationIntervalSeconds":60}}}
 ```
 
-九个工具为 `get_settings`、`update_settings`、`list_actions`、`capture_foreground`、`capture_screen`、`play_action`、`interrupt_action`、`say`、`say_next`。无参数工具传 `{}`。不要添加未定义的参数。
+基础九个工具为 `get_settings`、`update_settings`、`list_actions`、`capture_foreground`、`capture_screen`、`play_action`、`interrupt_action`、`say`、`say_next`。Windows 标准版另有 `notify_task` 和 `ask_user`，共 11 个；Linux 仍发布基础 9 个。无参数工具传 `{}`。不要添加未定义的参数。
 
 普通工具数据在 `result.content[0].text` 内，是一个 **JSON 字符串**。SDK 提供文本内容块后，还需要对该文本做一次 JSON 解析。当前工具不返回 `structuredContent`，也没有 `outputSchema`。截图工具额外返回标准 `image` 内容块，详情见截图一节。
 
@@ -253,3 +253,25 @@ Windows 位置字段是 `Left`、`Top`，Linux 为 `X`、`Y`；它们描述角�
 共享工具定义与范围在 [ControlTools.cs](../code/BigBlueFish.Control/ControlTools.cs)，协议、通知和资源在 [ControlServer.cs](../code/BigBlueFish.Control/ControlServer.cs)，桥接入口在 [Program.cs](../code/BigBlueFish.Mcp/Program.cs)。平台执行器分别为 [Windows CompanionMcp.cs](../code/BigBlueFish.Windows/Companion/CompanionMcp.cs) 与 [Linux LinuxMcp.cs](../code/BigBlueFish.Linux/LinuxMcp.cs)。
 
 标准消息形式参考 MCP 官方的[工具](https://modelcontextprotocol.io/specification/2025-11-25/server/tools)、[日志](https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/logging)和[资源](https://modelcontextprotocol.io/specification/2025-11-25/server/resources)规格。本文的平台限制、调度与状态字段以本项目当前实现为准。
+
+## Windows 基础监工（2026-10-27）
+
+第一版依赖 Agent 主动调用，不自动监测 Codex/Cursor 原生任务或拦截其审批。无需 DSH，无需内置模型，不额外调用模型。连接两边 MCP 后，可在各自 Agent 规则中约定：真正完成或失败时调用 notify_task；有需要用户决定或填写的问题时调用 ask_user 并等待实际结果。
+
+```json
+{"name":"notify_task","arguments":{"title":"蓝色大肥鱼 · 聊天界面","message":"修改和相关测试已完成，请查看交付结果。","status":"completed"}}
+```
+
+status 仅 completed / failed；title 1–120 字符，message 1–2000。显示气泡、请求 Windows 托盘通知；托盘标题和正文受系统长度限制会截短，气泡保留完整文字。accepted=true,userRead=false 只表示提交提醒，不表示用户已读；Windows 通知设置可能阻止通知。
+
+```json
+{"name":"ask_user","arguments":{"title":"聊天界面 · 需要你决定","question":"发送按钮放在哪里？","options":["右下角","输入框右侧"],"timeout_seconds":300}}
+```
+
+title 1–120 字符，question 1–4000。options 可省略，最多 8 项，每项 1–200 字符，不允许重复；没有默认选中。用户可单选、填写自由文本，或同时提交选项与补充文字。单次仅显示一个问题，其他请求收到忙碌错误；不自动选择，不代替宿主原生的工具审批。
+
+返回 JSON 字符串示例：`{"status":"submitted","selectedIndex":0,"selectedLabel":"右下角","text":"补充要求"}`。索引从 0 开始；纯填写时选项字段为 null。答案原文仅通过本次工具响应回给调用者，不发入广播交互资源、不写入鱼鱼长期记忆。宿主自身可能保留工具响应，敏感凭据不要在此填写。
+
+关闭/取消返回 status=cancelled；等待超过时限返回 expired，都没有选项和回答，不能当作批准。时限默认 300 秒，可指定 15–600；宿主自身的工具超时可能更短，需要按宿主配置。MCP 请求取消或连接断开会关闭窗口，不能保证用户来得及回答；超时后不要自动重试或继续执行。关闭 MCP、退出或手动隐藏鱼鱼时也关闭问题。普通自由输入广播的 user_message 不具备这种请求关联能力，不应用来替代 ask_user 的响应。
+
+进程重启不会恢复待回答的问题；尚未接入全局任务收件箱与运行时事件连接器。多阶段协作见 [Agent 待办](AGENT_TODO.md)。

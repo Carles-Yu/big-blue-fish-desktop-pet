@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Reflection;
@@ -103,7 +103,7 @@ internal static class Program
                     "Native settings window remains non-topmost and enabled " + i);
             }
             var currentScroll = Descendants<ScrollViewer>(window).First(v => v.Visibility == Visibility.Visible && v.Content is StackPanel);
-            Check(currentScroll.Content is StackPanel panel && panel.Children.OfType<TextBlock>().First().Text == "说话与天气" && Math.Abs(currentScroll.VerticalOffset-offset)<1,
+            Check(currentScroll.Content is StackPanel panel && Descendants<TextBlock>(panel).First().Text == "说话与天气" && Math.Abs(currentScroll.VerticalOffset-offset)<1,
                 "Remote refresh keeps selected page and scroll position");
             Check(window.Left == left && window.Top == top, "Remote refresh keeps window location");
             Check(Descendants<Slider>(window).Single(s => System.Windows.Automation.AutomationProperties.GetName(s) == "文字气泡大小").Value == 1.2,
@@ -123,24 +123,40 @@ internal static class Program
             window.Close();
         } finally { if (!other.HasExited) { other.CloseMainWindow(); if (!other.WaitForExit(2000)) other.Kill(); } }
     }
+    static Action FreezeGestureFrame()
+    {
+        var timer = (DispatcherTimer)Read("companionTimer");
+        bool running = timer.IsEnabled; timer.Stop();
+        var player = Read("videoPlayer");
+        var paused = player.GetType().GetProperty("Paused", Access)!;
+        bool wasPaused = (bool)paused.GetValue(player)!;
+        paused.SetValue(player, true);
+        ((Border)Read("bubble")).Visibility = Visibility.Collapsed;
+        Pump(60);
+        return () => { paused.SetValue(player, wasPaused); if (running) timer.Start(); };
+    }
     static void DoubleClickPet()
     {
         GetCursorPos(out var old);
+        Action resume = () => { };
         try {
+            _ = PetPointerTarget(); resume = FreezeGestureFrame();
             var point = PetPointerTarget();
             SetCursorPos((int)point.X, (int)point.Y); Pump(50);
             for (int i=0;i<2;i++) { mouse_event(2,0,0,0,UIntPtr.Zero); Pump(20); mouse_event(4,0,0,0,UIntPtr.Zero); Pump(80); }
-        } finally { SetCursorPos(old.X, old.Y); }
+        } finally { resume(); SetCursorPos(old.X, old.Y); }
     }
     static void DragPetByMouse()
     {
         GetCursorPos(out var old); double left=pet.Left, top=pet.Top;
+        Action resume = () => { };
         try {
+            _ = PetPointerTarget(); resume = FreezeGestureFrame();
             var start=PetPointerTarget();
             SetCursorPos((int)start.X,(int)start.Y); Pump(50); mouse_event(2,0,0,0,UIntPtr.Zero); Pump(50);
             SetCursorPos((int)start.X-50,(int)start.Y-25); Pump(150); mouse_event(4,0,0,0,UIntPtr.Zero); Pump(120);
             Check(Math.Abs(pet.Left-left)+Math.Abs(pet.Top-top)>5,"Real mouse drag moves pet while consent is pending");
-        } finally { mouse_event(4,0,0,0,UIntPtr.Zero); SetCursorPos(old.X,old.Y); }
+        } finally { mouse_event(4,0,0,0,UIntPtr.Zero); resume(); SetCursorPos(old.X,old.Y); }
     }
     static void Check(bool ok, string message) { if (!ok) throw new Exception(message); checks++; Console.WriteLine($"PASS {checks}: {message}"); }
     static void Pump(int milliseconds = 30)
@@ -241,7 +257,7 @@ internal static class Program
                 const string hint = "通过鱼鱼和已连接的Agent说话";
                 var placeholder = Descendants<TextBlock>(inputWindow).Single(t => t.Text == hint);
                 Check(inputWindow.WindowStyle == System.Windows.WindowStyle.None && !inputWindow.ShowInTaskbar && inputWindow.Owner == pet && inputWindow.Topmost, "Input is a frameless pet attachment, without independent title bar or taskbar button");
-                Check(inputWindow.Width <= 354 && inputWindow.Height <= 120 && placeholder.IsVisible && placeholder.Foreground == Brushes.Gray, "Compact input shows the exact gray placeholder while empty");
+                Check(inputWindow.Width <= 354 && inputWindow.Height <= 160 && placeholder.IsVisible && placeholder.Foreground == Brushes.Gray, "Compact input shows the exact gray placeholder while empty");
                 Check(GetForegroundWindow() == Handle(inputWindow) && input.IsKeyboardFocused, "Explicit double-click gives only the editor keyboard focus");
                 Render((Visual)inputWindow.Content, "mcp-input-empty.png", (int)inputWindow.ActualWidth, (int)inputWindow.ActualHeight);
                 var area = CompanionEdgeLayout.WorkArea(pet);

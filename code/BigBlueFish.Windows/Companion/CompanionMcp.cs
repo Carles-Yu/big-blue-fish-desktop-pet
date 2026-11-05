@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -28,6 +28,8 @@ public partial class MainWindow
     private bool ConsumeMcpSpeech() => false;
     private Action? AddMcpSettings(StackPanel panel, Window owner) => null;
     private bool TryOpenMcpInput() => false;
+    private bool AgentQuestionOpen => false;
+    private void CloseAgentQuestion() { }
 #else
     private ControlServer? mcpServer;
     private readonly Queue<string> mcpActions = new();
@@ -46,6 +48,7 @@ public partial class MainWindow
     }
     private void StopMcp()
     {
+        agentPrompt?.Close();
         mcpConsentWindow?.Close();
         mcpInput?.Close();
         mcpServer?.Dispose(); mcpServer = null;
@@ -107,6 +110,8 @@ public partial class MainWindow
             if (!preferences.McpEnabled || companionClosed || exitAnimation) throw new InvalidOperationException("MCP 接口已关闭或桌宠正在退出。");
             switch (name)
             {
+                case "notify_task": return NotifyAgentTask(args);
+                case "ask_user": return await AskAgentUser(args, token);
                 case "get_settings":
                     return ControlTools.Text(new { settings = CurrentMcpSettings(), state = new {
                         visible = IsVisible, hiddenByUser, fullscreenHidden, action = currentAction, animationPhase,
@@ -188,25 +193,27 @@ public partial class MainWindow
             && !await ConfirmMcp(companionSettings, "开启提线木偶模式", ControlTools.PuppetWarning, token)) throw new OperationCanceledException("用户取消开启提线木偶模式。");
         token.ThrowIfCancellationRequested();
         if (!preferences.McpEnabled) throw new OperationCanceledException();
-        bool oldGpu = preferences.GpuEnabled, oldModel = preferences.ModelEnabled, oldForeground = preferences.ForegroundEnabled;
-        string oldRegion = preferences.WeatherRegionCode;
+        var before = CompanionSettingsSnapshot.From(preferences);
         foreach (var item in values)
         {
             if (item.Key == "StartupEnabled") SetCompanionStartup((bool)item.Value!);
             else if (item.Key != "PuppetMode") typeof(CompanionPreferences).GetProperty(item.Key)!.SetValue(preferences, item.Value);
         }
         if (values.TryGetValue("PuppetMode", out puppet)) SetPuppetMode((bool)puppet!);
-        if (oldGpu != preferences.GpuEnabled || oldModel && !preferences.ModelEnabled) { speechRequestVersion++; brain.Stop(); }
+        var after = CompanionSettingsSnapshot.From(preferences);
+        if (before.MustStop(after, CompanionNative.OnAC)) { speechRequestVersion++; brain.Stop(); EndModelSpeech(); ClearCompanionModelReply(); }
         brain.UseGpu = preferences.GpuEnabled; brain.WeatherRegionCode = preferences.WeatherRegionCode;
-        if (oldRegion != preferences.WeatherRegionCode || oldForeground != preferences.ForegroundEnabled) { speechRequestVersion++; brain.CancelGeneration(); EndModelSpeech(); ClearCompanionModelReply(); }
-        ApplyCompanionPowerPolicy(); ApplyCompanionScale(false); ApplyCompanionBubbleScale(false);
+        brain.StopOnBattery = preferences.StopModelOnBattery; brain.StopCloudOnBattery = preferences.StopCloudOnBattery;
+        if (before != after) nextWarmup = DateTime.MinValue;
+        if (before.Scale != after.Scale) ApplyCompanionScale(false);
+        if (before.BubbleScale != after.BubbleScale) ApplyCompanionBubbleScale(false);
         if (values.TryGetValue("Left", out var left) && left is double x) Left = x;
         if (values.TryGetValue("Top", out var top) && top is double y) Top = y;
         ClampCompanion(); anchor = new(Left, Top);
         if (!preferences.HideOnFullscreen && fullscreenHidden) { fullscreenHidden = false; if (!hiddenByUser) Show(); }
-        if (values.ContainsKey("SpeechMinMinutes")) nextSpeech = DateTime.UtcNow.Add(preferences.NextSpeechDelay(companionRandom));
-        if (values.ContainsKey("AnimationIntervalSeconds")) nextAction = DateTime.UtcNow.AddSeconds(preferences.AnimationIntervalSeconds);
-        if (values.ContainsKey("BubbleDurationIndex") && bubble.Visibility == Visibility.Visible) ResetBubbleDeadline();
+        if (before.Speech != after.Speech) nextSpeech = DateTime.UtcNow.Add(preferences.NextSpeechDelay(companionRandom));
+        if (before.Animation != after.Animation || before.Breakfast != after.Breakfast || before.Lunch != after.Lunch || before.Dinner != after.Dinner) nextAction = DateTime.UtcNow.AddSeconds(preferences.AnimationIntervalSeconds);
+        if (before.Dwell != after.Dwell && bubble.Visibility == Visibility.Visible) ResetBubbleDeadline();
         SaveCompanion();
         refreshCompanionSettings?.Invoke();
     }
@@ -253,6 +260,15 @@ public partial class MainWindow
         Preview("Codex", CompanionClientConfig.CodexToml, 88);
         var actions = new WrapPanel { Margin = new(0, 8, 0, 4) };
         var result = new TextBlock { Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap, Margin = new(0, 0, 0, 8) };
+        var cursorPath = Preview("Cursor 配置文件（可修改）", CompanionClientConfig.CursorPath, 36); cursorPath.IsReadOnly = false;
+        var codexPath = Preview("Codex 配置文件（可修改）", CompanionClientConfig.CodexPath, 36); codexPath.IsReadOnly = false;
+        void WriteClient(string path, bool codex)
+        {
+            var change = CompanionClientConfig.Prepare(path, codex);
+            if (!change.Changed) { result.Text = "已配置，无需改动。"; return; }
+            if (BigBlueFish.Deployment.ModernUI.Choice(owner, "预览 MCP 配置修改", change.Preview, "备份并保存", "取消") != 0) return;
+            result.Text = CompanionClientConfig.Save(change);
+        }
         Button Command(string label, Action action)
         {
             var button = new Button { Content = label, Margin = new(0, 0, 8, 8) };
@@ -266,9 +282,9 @@ public partial class MainWindow
             return button;
         }
         Command("复制 Cursor 配置", () => { Clipboard.SetText(CompanionClientConfig.CursorJson); result.Text = "Cursor 配置已复制。"; });
-        Command("写入 Cursor", () => { CompanionClientConfig.WriteCursor(); result.Text = "已写入 " + CompanionClientConfig.CursorPath; });
+        Command("写入 Cursor", () => WriteClient(cursorPath.Text, false));
         Command("复制 Codex 配置", () => { Clipboard.SetText(CompanionClientConfig.CodexToml); result.Text = "Codex 配置已复制。"; });
-        Command("写入 Codex", () => { CompanionClientConfig.WriteCodex(); result.Text = "已写入 " + CompanionClientConfig.CodexPath; });
+        Command("写入 Codex", () => WriteClient(codexPath.Text, true));
         panel.Children.Add(actions);
         panel.Children.Add(result);
         var status = new TextBlock { Foreground = Brushes.SlateGray, TextWrapping = TextWrapping.Wrap };
@@ -331,19 +347,19 @@ public partial class MainWindow
         var blue = new SolidColorBrush(global::BigBlueFish.Windows.CompanionBubble.HairBlue);
         var text = new TextBox { AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxLength = 4000,
             Height = 56, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalContentAlignment = VerticalAlignment.Top,
-            FontSize = 14, Foreground = blue, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0, 2, 22, 0) };
+            FontSize = 18, Foreground = blue, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Padding = new Thickness(0, 2, 22, 0) };
         System.Windows.Automation.AutomationProperties.SetName(text, hint);
-        var placeholder = new TextBlock { Text = hint, Foreground = Brushes.Gray, FontSize = 14,
+        var placeholder = new TextBlock { Text = hint, Foreground = Brushes.Gray, FontSize = 18,
             Margin = new Thickness(2, 4, 22, 0), IsHitTestVisible = false, TextWrapping = TextWrapping.Wrap };
         var editor = new Grid(); editor.Children.Add(text); editor.Children.Add(placeholder);
-        var status = new TextBlock { Text = "Ctrl+Enter 发送", Foreground = Brushes.SlateGray, FontSize = 11,
+        var status = new TextBlock { Text = "Ctrl+Enter 发送", Foreground = Brushes.SlateGray, FontSize = 15,
             VerticalAlignment = VerticalAlignment.Center, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 8, 0) };
         var content = new StackPanel(); content.Children.Add(editor);
-        var frame = new Border { Background = new SolidColorBrush(Color.FromRgb(255, 251, 244)), BorderBrush = blue,
-            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(14), Padding = new Thickness(12), Child = content };
-        var window = new Window { Title = "蓝色大肥鱼 · 输入", Width = 354, Height = 120, WindowStyle = WindowStyle.None,
+        var frame = new Border { Background = new SolidColorBrush(Color.FromRgb(242, 247, 255)), BorderBrush = blue,
+            BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(18), Padding = new Thickness(12), Child = content };
+        var window = new Window { Title = "蓝色大肥鱼 · 输入", Width = 354, Height = 148, WindowStyle = WindowStyle.None,
             AllowsTransparency = true, Background = Brushes.Transparent, ResizeMode = ResizeMode.NoResize,
-            ShowInTaskbar = false, ShowActivated = false, Topmost = true, Owner = this, Content = frame, FontFamily = new FontFamily("Microsoft YaHei UI") };
+            ShowInTaskbar = false, ShowActivated = false, Topmost = true, Owner = this, Content = frame, FontFamily = CompanionSettingsTheme.CuteFont };
         using (var theme = typeof(ModernWindow).Assembly.GetManifestResourceStream("BigBlueFish.ModernTheme.xaml")!)
         {
             var resources = (ResourceDictionary)System.Windows.Markup.XamlReader.Load(theme);
@@ -360,7 +376,7 @@ public partial class MainWindow
             PublishMcpInteraction("user_message", new { text = text.Text });
             text.Clear(); status.Text = "已发送给 Agent"; text.Focus();
         }
-        var send = ModernUI.Button("发送", Send, true); send.MinWidth = 58; send.MinHeight = 0; send.Margin = new Thickness(0); send.Padding = new Thickness(12, 5, 12, 5); send.FontSize = 12;
+        var send = ModernUI.Button("发送", Send, true); send.MinWidth = 58; send.MinHeight = 0; send.Margin = new Thickness(0); send.Padding = new Thickness(12, 5, 12, 5); send.FontSize = 17;
         var actions = new Grid { Margin = new Thickness(0, 4, 0, 0) };
         actions.ColumnDefinitions.Add(new ColumnDefinition()); actions.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         actions.Children.Add(status); actions.Children.Add(send); Grid.SetColumn(send, 1); content.Children.Add(actions);

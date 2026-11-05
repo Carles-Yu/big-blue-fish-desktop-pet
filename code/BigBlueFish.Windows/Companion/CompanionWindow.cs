@@ -1,4 +1,4 @@
-using Microsoft.Win32;
+﻿using Microsoft.Win32;
 using System;
 using System.IO;
 using System.Linq;
@@ -23,6 +23,7 @@ public partial class MainWindow
     private Border loadingIndicator = null !;
     private CompanionLoadingRing loadingSpinner = null !;
     private CompanionSpeech speech = null!;
+    private Action? agentNotificationClick;
     private bool bubbleIsModelReply;
     private long speechRequestVersion;
     private Grid companionLayout = null !;
@@ -72,8 +73,11 @@ public partial class MainWindow
             StopCloudOnBattery = preferences.StopCloudOnBattery,
             UseGpu = preferences.GpuEnabled,
             StopOnBattery = preferences.StopModelOnBattery,
-            WeatherRegionCode = preferences.WeatherRegionCode
+            WeatherRegionCode = preferences.WeatherRegionCode,
+            MemoryContext = (scene, cloud, kind) => companionMemory is { Enabled: true } ? companionMemory.Prompt(scene, cloud, kind) : ""
         };
+        if (preferences.MemoryEnabled || preferences.SyncEnabled)
+            try { EnsureCompanionMemory(); } catch (Exception) { }
         InitializeComponent();
         System.Windows.Shell.WindowChrome.SetWindowChrome(this, null);
         AllowsTransparency = true;
@@ -303,11 +307,12 @@ public partial class MainWindow
     private void ApplyCompanionPowerPolicy()
     {
         if (brain == null || preferences == null) return;
+        bool allowedBefore = brain.CanRunOnCurrentPower;
         brain.StopOnBattery = preferences.StopModelOnBattery;
         brain.StopCloudOnBattery = preferences.StopCloudOnBattery;
-        if (!brain.CanRunOnCurrentPower)
+        if (allowedBefore && !brain.CanRunOnCurrentPower)
         {
-            brain.Stop();
+            speechRequestVersion++; brain.Stop(); EndModelSpeech();
             ClearCompanionModelReply();
         }
         nextWarmup = DateTime.MinValue;
@@ -364,8 +369,9 @@ public partial class MainWindow
         {
             preferences.Save();
         }
-        catch
+        catch (Exception error) when (error is System.IO.IOException or UnauthorizedAccessException)
         {
+            if (companionSettings?.IsVisible == true) BigBlueFish.Deployment.ModernUI.Choice(companionSettings, "设置未保存", "无法保存设置，请检查目录权限后重试。", "知道了");
         }
     }
 
@@ -374,7 +380,8 @@ public partial class MainWindow
         if (exitAnimation || e.ChangedButton != MouseButton.Left || bubble.IsMouseOver)
             return;
         e.Handled = true;
-        if (e.ClickCount == 2 && TryOpenMcpInput()) {
+        if (e.ClickCount == 2) {
+            if (!TryOpenMcpInput()) OpenFishChat();
             PublishMcpInteraction("click", new { button = "left", count = 2, Left, Top });
             return;
         }
@@ -537,6 +544,12 @@ public partial class MainWindow
                     case "speech-test":
                         _ = SpeakCompanionTest();
                         break;
+                    case "open-menu":
+                        companionContextMenu.IsOpen = true;
+                        break;
+                    case "balance":
+                        _ = SpeakCompanionBalance();
+                        break;
                     case "close-settings":
                         companionSettings?.Close();
                         break;
@@ -648,7 +661,7 @@ public partial class MainWindow
             return;
         if (bubble.Visibility == Visibility.Visible && now > bubbleUntil)
             bubble.Visibility = Visibility.Collapsed;
-        if (PuppetActive || now < nextSpeech || companionSettings != null || modelInstaller != null
+        if (PuppetActive || now < nextSpeech || companionSettings != null || fishChatWindow != null || AgentQuestionOpen || modelInstaller != null
             || !HasScheduledMcpSpeech && (speechRequestPending || brain.Busy || weatherRequestPending || !preferences.ModelEnabled || !brain.ModelAvailable || !brain.CanRunOnCurrentPower))
             return;
         if (CompanionNative.IdleSeconds < 8 || CompanionNative.IdleSeconds > 600)
@@ -735,6 +748,14 @@ public partial class MainWindow
         string[] icons = ["\uE7F4", "\uE713", "\uE706", "\uE8F2", "\uE8BB"];
         for (int index = 0; index < menu.Items.Count; index++) menu.Items[index].Tag = icons[index];
         var quietItem = menu.Items.Add(quietHours.MenuLabel, null, (_, _) => Dispatcher.Invoke(ToggleQuietHours));
+        quietItem.Tag = "\uE916";
+        var quotaItem = new System.Windows.Forms.ToolStripMenuItem("额度查询") { Tag = "\uE9D9" };
+        var codexQuotaItem = new System.Windows.Forms.ToolStripMenuItem("Codex", null, (_, _) => Dispatcher.Invoke(OpenCodexQuota)) { Tag = CompanionBrand.Codex };
+        var cursorQuotaItem = new System.Windows.Forms.ToolStripMenuItem("Cursor", null, (_, _) => Dispatcher.Invoke(OpenCursorQuota)) { Tag = CompanionBrand.Cursor };
+        quotaItem.DropDownItems.Add(codexQuotaItem);
+        quotaItem.DropDownItems.Add(cursorQuotaItem);
+        menu.Items.Add(quotaItem);
+        menu.PrepareQuotaMenu(quotaItem);
         menu.Opening += (_, _) => quietItem.Text = quietHours.MenuLabel;
         using var sourceIcon = new System.Drawing.Icon(Path.Combine(AppContext.BaseDirectory, "BigBlueFish.ico"));
         notifyIcon = new CompanionTrayIcon
@@ -744,7 +765,7 @@ public partial class MainWindow
             ContextMenuStrip = menu
         };
         notifyIcon.DoubleClick += (_, _) => Dispatcher.Invoke(RestoreCompanion);
-        notifyIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(OpenUpdateWindow);
+        notifyIcon.BalloonTipClicked += (_, _) => Dispatcher.Invoke(() => { agentNotificationClick?.Invoke(); });
         notifyIcon.Visible = true;
     }
 
@@ -769,6 +790,10 @@ public partial class MainWindow
         bubble.Visibility = Visibility.Collapsed;
         Hide();
         companionSettings?.Close();
+        fishChatWindow?.Close();
+        codexQuotaWindow?.Close();
+        cursorQuotaWindow?.Close();
+        CloseAgentQuestion();
     }
 
     private const string StartupName = "BlueWhaleCompanion";
@@ -801,9 +826,15 @@ public partial class MainWindow
         videoPlayer?.Dispose();
         loadingSpinner?.Stop();
         speech?.Dispose();
+        memorySyncLoop?.Cancel();
         brain?.Dispose();
+        companionMemory?.Dispose();
         SaveCompanion();
         companionSettings?.Close();
+        fishChatWindow?.Close();
+        codexQuotaWindow?.Close();
+        cursorQuotaWindow?.Close();
+        CloseAgentQuestion();
         SystemEvents.PowerModeChanged -= CompanionPowerChanged;
         SystemEvents.DisplaySettingsChanged -= CompanionDisplayChanged;
         if (notifyIcon != null) { notifyIcon.Visible = false; notifyIcon.Dispose(); }

@@ -253,6 +253,7 @@ internal static class CloudQuietVerification
                 IEnumerable<T> Children<T>(DependencyObject root) where T : DependencyObject { for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++) { var child = VisualTreeHelper.GetChild(root, i); if (child is T value) yield return value; foreach (var nested in Children<T>(child)) yield return nested; } }
                 Children<Button>(settings).First(b => b.Content?.ToString() == "模型与供电").RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Pump();
                 Check(Children<Button>(settings).Any(b => b.Content?.ToString() == "测试已保存的云端连接"), "Cloud connection test is present in settings");
+                Check(Children<Button>(settings).Any(b => b.Content?.ToString() == "查询 DeepSeek 余额"), "DeepSeek balance query is present in settings");
                 var image = new RenderTargetBitmap((int)settings.ActualWidth, (int)settings.ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(settings);
                 var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image)); using (var file = File.Create(Path.Combine(directory, "settings.png"))) encoder.Save(file);
                 Check(settings.IsVisible, "Settings render with explicit mode and cloud controls");

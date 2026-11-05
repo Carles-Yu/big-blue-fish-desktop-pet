@@ -3,6 +3,20 @@ using System.IO;
 using System.Text.Json;
 
 namespace BigBlueFish.Windows;
+internal sealed record CompanionSettingsSnapshot(bool Enabled, bool Cloud, bool Gpu, bool Foreground,
+    bool LocalBattery, bool CloudBattery, int Speech, int Animation, int Breakfast, int Lunch, int Dinner,
+    double Scale, double BubbleScale, int Dwell)
+{
+    internal static CompanionSettingsSnapshot From(CompanionPreferences p) => new(p.ModelEnabled, p.CloudSelected,
+        p.GpuEnabled, p.ForegroundEnabled, p.StopModelOnBattery, p.StopCloudOnBattery, p.SpeechMinMinutes,
+        p.AnimationIntervalSeconds, p.BreakfastHour, p.LunchHour, p.DinnerHour, p.Scale, p.BubbleScale, p.BubbleDurationIndex);
+    internal bool AllowsPower(bool onAC) => onAC || !(Cloud ? CloudBattery : LocalBattery);
+    internal bool MustStop(CompanionSettingsSnapshot next, bool onAC, bool configChanged = false) =>
+        Enabled && !next.Enabled || Cloud != next.Cloud || !next.Cloud && Gpu != next.Gpu
+        || Foreground != next.Foreground || AllowsPower(onAC) && !next.AllowsPower(onAC)
+        || next.Cloud && configChanged;
+}
+
 internal sealed class CompanionPreferences
 {
     public string? ModelMode { get; set; }
@@ -34,6 +48,10 @@ internal sealed class CompanionPreferences
     public bool McpEnabled { get; set; }
     public bool PuppetMode { get; set; }
     public bool McpChatEnabled { get; set; }
+    public bool ChatWebSearchEnabled { get; set; }
+    public bool MemoryEnabled { get; set; }
+    public bool SyncEnabled { get; set; }
+    public string? SyncServerUrl { get; set; }
     public string WeatherRegionCode { get; set; } = CompanionRegions.DefaultCode;
     public double Scale { get; set; } = 1;
     public double BubbleScale { get; set; } = 1;

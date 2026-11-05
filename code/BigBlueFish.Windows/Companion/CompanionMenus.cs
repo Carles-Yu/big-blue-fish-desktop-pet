@@ -1,4 +1,5 @@
-using System;
+﻿using System;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +11,7 @@ namespace BigBlueFish.Windows;
 public partial class MainWindow
 {
     private const string BatteryPauseNotice = "主人，当前设置为笔记本离电暂停模型，可以在设置里调节哦。";
+    private int balanceQuery;
 
     private void BuildCompanionContextMenu()
     {
@@ -36,15 +38,44 @@ public partial class MainWindow
         test.Icon = Icon("\uE8F2");
         test.Click += async (_, _) => { companionContextMenu.IsOpen = false; await SpeakCompanionTest(); };
         companionContextMenu.Items.Add(test);
+        var balance = new MenuItem { Header = "看看余额" };
+        balance.Icon = Icon("\uE825");
+        balance.Click += async (_, _) => { companionContextMenu.IsOpen = false; await SpeakCompanionBalance(); };
+        companionContextMenu.Items.Add(balance);
         var hide = new MenuItem { Header = "隐藏桌宠" };
         hide.Icon = Icon("\uE8A7");
         hide.Click += (_, _) => { companionContextMenu.IsOpen = false; HideCompanion(); };
         companionContextMenu.Items.Add(hide);
-        var quiet = new MenuItem { Header = quietHours.MenuLabel };
+        var quiet = new MenuItem { Header = quietHours.MenuLabel, Icon = Icon("\uE916") };
         quiet.Click += (_, _) => { companionContextMenu.IsOpen = false; ToggleQuietHours(); };
         companionContextMenu.Items.Add(quiet);
+        var quota = new MenuItem { Header = "额度查询", Icon = Icon("\uE9D9") };
+        var codexQuota = new MenuItem { Header = "Codex", Icon = CompanionBrandIcons.Create(CompanionBrand.Codex) };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(codexQuota, "codex-quota-menu");
+        codexQuota.Click += (_, _) => OpenCodexQuota();
+        var cursorQuota = new MenuItem { Header = "Cursor", Icon = CompanionBrandIcons.Create(CompanionBrand.Cursor) };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(cursorQuota, "cursor-quota-menu");
+        cursorQuota.Click += (_, _) => OpenCursorQuota();
+        quota.Items.Add(codexQuota);
+        quota.Items.Add(cursorQuota);
+        companionContextMenu.Items.Add(quota);
         companionContextMenu.Opened += (_, _) => quiet.Header = quietHours.MenuLabel;
         companionContextMenu.Opened += (_, _) => { weather.IsEnabled = !PuppetActive; test.IsEnabled = !PuppetActive; };
+    }
+
+    private async Task SpeakCompanionBalance()
+    {
+        if (companionClosed || exitAnimation || Interlocked.Exchange(ref balanceQuery, 1) == 1) return;
+        try
+        {
+            companionContextMenu.IsOpen = false;
+            if (hiddenByUser || fullscreenHidden) RestoreCompanion();
+            ShowCompanionNotice("主人，鱼鱼去看看还剩多少～");
+            var report = await CompanionCloud.QueryBalance();
+            if (companionClosed || exitAnimation || hiddenByUser || fullscreenHidden) return;
+            ShowCompanionNotice(report.Speech, true);
+        }
+        finally { Interlocked.Exchange(ref balanceQuery, 0); }
     }
 
     private async Task SpeakCompanionWeather()
@@ -86,7 +117,7 @@ public partial class MainWindow
                 EndModelSpeech();
             }
             if (version == speechRequestVersion && !companionClosed && !hiddenByUser && !fullscreenHidden && preferences.ModelEnabled
-                && brain.CanRunOnCurrentPower && regionCode == preferences.WeatherRegionCode)
+                && brain.CanRunOnCurrentPower)
             {
                 if (text.Length > 0) { FinishCompanionPartial(text); }
                 else ShowCompanionNotice("主人，" + brain.Status + "。");
@@ -156,7 +187,6 @@ public partial class MainWindow
         void SaveRegion()
         {
             if (district.SelectedItem is not CompanionRegion region) return;
-            if (preferences.WeatherRegionCode != region.Code) brain.CancelGeneration();
             preferences.WeatherRegionCode = region.Code;
             brain.WeatherRegionCode = region.Code;
             SaveCompanion();

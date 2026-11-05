@@ -1,7 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace BigBlueFish.Windows;
 
@@ -50,6 +55,104 @@ internal static class CompanionCloud
         Apply(environment("DEEPSEEK_BASE_URL"), environment("DEEPSEEK_MODEL"), environmentKey, "环境变量");
         return new Editor(url, model, key, environmentKey != null,
             $"地址：{urlSource}；模型：{modelSource}；Key：{keySource}", string.Join("\n", warnings));
+    }
+
+    static readonly HttpClient BalanceHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
+
+    internal static bool IsDeepSeek(string baseUrl) =>
+        Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)
+        && (uri.Host.Equals("deepseek.com", StringComparison.OrdinalIgnoreCase) || uri.Host.EndsWith(".deepseek.com", StringComparison.OrdinalIgnoreCase));
+
+    internal static Uri BalanceUri(string baseUrl)
+    {
+        if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out var uri)) throw new IOException("接口地址无效。");
+        return new UriBuilder(uri) { Path = "/user/balance", Query = "", Fragment = "" }.Uri;
+    }
+
+    internal readonly record struct BalanceReport(string Detail, string Speech);
+
+    internal static Task<BalanceReport> QueryBalance(HttpClient? http = null) => QueryBalance(LoadEditor(), http);
+
+    internal static async Task<BalanceReport> QueryBalance(Editor editor, HttpClient? http)
+    {
+        if (string.IsNullOrWhiteSpace(editor.ApiKey)) return new("尚未配置云端 API Key。", "主人，还没给鱼鱼 DeepSeek 的钥匙，鱼鱼查不到还剩多少呀。");
+        Validate(editor.BaseUrl, editor.Model);
+        if (!IsDeepSeek(editor.BaseUrl)) return new("目前只查询 DeepSeek 余额。当前保存的接口不是 DeepSeek。", "主人，鱼鱼现在只会看 DeepSeek 的小钱袋哦。");
+        var client = http ?? BalanceHttp;
+        using var request = new HttpRequestMessage(HttpMethod.Get, BalanceUri(editor.BaseUrl));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", editor.ApiKey);
+        using var cancel = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        try
+        {
+            using var response = await client.SendAsync(request, cancel.Token);
+            if ((int)response.StatusCode is 401 or 403) return new("余额查询鉴权失败，请检查 API Key。", "唔，钥匙好像不对，鱼鱼进不去看余额。");
+            if (!response.IsSuccessStatusCode) return new($"余额查询失败（HTTP {(int)response.StatusCode}）。", "唔，鱼鱼这次没看成，主人等一下再让鱼鱼看吧。");
+            return FormatBalance(await response.Content.ReadAsStringAsync(cancel.Token));
+        }
+        catch (OperationCanceledException) { return new("余额查询超时，请稍后重试。", "唔，等太久了，鱼鱼没看成余额。"); }
+        catch (HttpRequestException) { return new("暂时连不上 DeepSeek 余额接口。", "唔，鱼鱼连不上，这次没看成余额。"); }
+        catch (JsonException) { return new("余额响应无法读取。", "唔，鱼鱼看不懂这次的回信。"); }
+    }
+
+    internal static BalanceReport FormatBalance(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        bool available = !root.TryGetProperty("is_available", out var flag) || flag.ValueKind != JsonValueKind.False;
+        if (!root.TryGetProperty("balance_infos", out var infos) || infos.ValueKind != JsonValueKind.Array || infos.GetArrayLength() == 0)
+            return available
+                ? new("已连上 DeepSeek，没有返回余额明细。", "主人，鱼鱼连上了，可是没看见还剩多少。")
+                : new("DeepSeek 账户当前不可用。", "唔，主人，这个账户现在用不了了。");
+        var details = new List<string>();
+        var lines = new List<Money>();
+        foreach (var info in infos.EnumerateArray())
+        {
+            string currency = Field(info, "currency");
+            string total = Field(info, "total_balance");
+            string granted = Field(info, "granted_balance");
+            string name = currency.ToUpperInvariant() switch { "CNY" => "人民币", "USD" => "美元", "" or "—" => "余额", _ => currency };
+            details.Add($"{name} 合计 {total}（充值 {Field(info, "topped_up_balance")}，赠送 {granted}）");
+            lines.Add(new Money(name, MoneyText(currency, total), MoneyText(currency, granted), IsZero(total), IsPositive(granted)));
+        }
+        return new((available ? "DeepSeek 余额可用。" : "DeepSeek 账户当前不可用。") + string.Join("；", details), SpeakBalance(available, lines));
+    }
+
+    private readonly record struct Money(string Name, string Amount, string GiftText, bool Empty, bool Gift);
+
+    static string SpeakBalance(bool available, List<Money> lines)
+    {
+        if (!available) return $"唔，主人，账户现在用不了，账上还记着 {lines[0].Amount}。";
+        if (lines.Count == 1)
+        {
+            var line = lines[0];
+            if (line.Empty) return "哎呀，主人，钱袋空空的了。";
+            if (line.Gift) return $"主人，鱼鱼看过啦，还剩 {line.Amount}，里面 {line.GiftText}是送的嘞。";
+            return $"主人，鱼鱼看过啦，还剩 {line.Amount}呢～";
+        }
+        var parts = new List<string>();
+        foreach (var line in lines) parts.Add($"{line.Name}还剩 {line.Amount}");
+        return "主人，鱼鱼看过啦，" + string.Join("，", parts) + "。";
+    }
+
+    static string MoneyText(string currency, string value) => currency.ToUpperInvariant() switch
+    {
+        "CNY" => value + " 元",
+        "USD" => value + " 美元",
+        _ => currency is "" or "—" ? value : value + " " + currency
+    };
+
+    static bool IsZero(string value) => decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) && number == 0;
+    static bool IsPositive(string value) => decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var number) && number > 0;
+
+    static string Field(JsonElement element, string name)
+    {
+        if (!element.TryGetProperty(name, out var value)) return "—";
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => string.IsNullOrWhiteSpace(value.GetString()) ? "—" : value.GetString()!,
+            JsonValueKind.Number => value.GetRawText(),
+            _ => "—"
+        };
     }
 
     internal static Settings? TryLoad()

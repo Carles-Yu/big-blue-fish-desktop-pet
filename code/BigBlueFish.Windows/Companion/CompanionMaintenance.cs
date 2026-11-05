@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Windows;
 using System.Threading.Tasks;
@@ -43,13 +43,13 @@ public partial class MainWindow
             if (availableUpdate != null)
             {
                 if (interactive) OpenUpdateWindow();
-                else notifyIcon.ShowBalloonTip(8000, "蓝色大肥鱼有新版本啦", "点击下载并更新到 " + availableUpdate.Version, System.Windows.Forms.ToolTipIcon.Info);
+                else { agentNotificationClick = OpenUpdateWindow; notifyIcon.ShowBalloonTip(8000, "蓝色大肥鱼有新版本啦", "点击下载并更新到 " + availableUpdate.Version, System.Windows.Forms.ToolTipIcon.Info); }
             }
             else if (interactive) ModernUI.Choice(companionSettings, "检查更新", updateStatus, "确定");
         }
         catch (Exception error)
         {
-            updateStatus = "暂时无法检查更新，可以稍后重试";
+            updateStatus = error.Message;
             if (interactive) ModernUI.Error(companionSettings, "检查更新未完成", error);
         }
         finally { checkingUpdates = false; }

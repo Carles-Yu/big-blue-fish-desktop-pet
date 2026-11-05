@@ -1,7 +1,12 @@
 <Project>
   <PropertyGroup>
     <CompanionInputMode Condition="'$(CompanionInputMode)' == ''">Ocr</CompanionInputMode>
-    <Version>1.0.1</Version>
+    <Version>1.1.0</Version>
+    <MaintenanceLabel>黎玊维护版</MaintenanceLabel>
+    <MaintenanceAccount>Carles-Yu</MaintenanceAccount>
+    <RepositoryUrl>https://github.com/Carles-Yu/big-blue-fish-desktop-pet</RepositoryUrl>
+    <UpstreamUrl>https://github.com/Bai-Cute/big-blue-fish-desktop-pet</UpstreamUrl>
+    <UpdateChannel>Stable</UpdateChannel>
     <CompanionEdition Condition="'$(CompanionEdition)' == ''">Standard</CompanionEdition>
     <DefineConstants Condition="'$(CompanionEdition)' == 'Safe'">$(DefineConstants);COMPANION_SAFE</DefineConstants>
     <AssemblyVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(Version)', '-.*$', '')).0</AssemblyVersion>
@@ -10,4 +15,19 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <ApplicationVersion>$(AssemblyVersion)</ApplicationVersion>
   </PropertyGroup>
+  <Target Name="ResolveMaintenanceMetadata" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git -C &quot;$(MSBuildThisFileDirectory)&quot; rev-parse --short HEAD" ConsoleToMSBuild="true" IgnoreExitCode="true" StandardErrorImportance="Low" Condition="'$(BuildCommit)' == ''">
+      <Output TaskParameter="ConsoleOutput" PropertyName="BuildCommit" />
+    </Exec>
+    <PropertyGroup><BuildCommit Condition="'$(BuildCommit)' == ''">未知</BuildCommit></PropertyGroup>
+    <ItemGroup>
+      <AssemblyMetadata Include="MaintenanceLabel" Value="$(MaintenanceLabel)" />
+      <AssemblyMetadata Include="MaintenanceAccount" Value="$(MaintenanceAccount)" />
+      <AssemblyMetadata Include="RepositoryUrl" Value="$(RepositoryUrl)" />
+      <AssemblyMetadata Include="UpstreamUrl" Value="$(UpstreamUrl)" />
+      <AssemblyMetadata Include="UpdateChannel" Value="$(UpdateChannel)" />
+      <AssemblyMetadata Include="CompanionEdition" Value="$(CompanionEdition)" />
+      <AssemblyMetadata Include="BuildCommit" Value="$(BuildCommit)" />
+    </ItemGroup>
+  </Target>
 </Project>

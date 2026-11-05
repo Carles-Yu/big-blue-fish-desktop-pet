@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Text.Json;
 using BigBlueFish.Control;
 
@@ -29,7 +29,7 @@ Check(response.GetProperty("result").GetProperty("instructions").GetString()!.Co
 await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}");
 response = await Request(2, "tools/list");
 var tools = response.GetProperty("result").GetProperty("tools").EnumerateArray().ToArray();
-Check(tools.Length == 9, "Nine tools");
+Check(tools.Length == 11, "Eleven tools including supervision");
 foreach (var tool in tools) Check(tool.GetProperty("inputSchema").GetProperty("type").GetString() == "object", "Object schema");
 var settingSchema = tools.Single(t => t.GetProperty("name").GetString() == "update_settings").GetProperty("inputSchema").GetProperty("properties").GetProperty("settings");
 Check(!settingSchema.GetProperty("additionalProperties").GetBoolean(), "Settings schema rejects undocumented fields");

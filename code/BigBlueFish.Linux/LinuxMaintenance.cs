@@ -107,35 +107,25 @@ internal sealed partial class LinuxPetWindow
         try { dialog.Show(settings ?? this); await finished.Task; }
         finally { modelWindowCancellation = null; modelDialog = null; modelInstalling = false; if (!closed && phase != "Exit") nextWarmup = DateTime.MinValue; }
     }
+    string updateStatus = "尚未检查更新";
     async Task CheckUpdates(bool manual)
     {
         if (updateChecking) return; updateChecking = true;
         try {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(25) };
-            client.DefaultRequestHeaders.UserAgent.ParseAdd("BigBlueFish/" + typeof(LinuxPetWindow).Assembly.GetName().Version!.ToString(3));
-            using var json = JsonDocument.Parse(await client.GetStringAsync("https://api.github.com/repos/Bai-Cute/big-blue-fish-desktop-pet/releases/latest"));
-            var root = json.RootElement; string tag = root.GetProperty("tag_name").GetString() ?? "";
-            if (!Version.TryParse(tag.TrimStart('v'), out var latest) || latest <= typeof(LinuxPetWindow).Assembly.GetName().Version) { if (manual) await Confirm("检查更新", "当前已经是最新版本。", "知道了"); return; }
-#if COMPANION_SAFE
-            string asset = $"BigBlueFish-v{latest.ToString(3)}-Safe-Linux-x64.deb";
-#else
-            string asset = $"BigBlueFish-v{latest.ToString(3)}-Linux-x64.deb";
-#endif
-            var assets = root.GetProperty("assets").EnumerateArray().ToArray();
-            string? Url(string name) => assets.FirstOrDefault(a => a.GetProperty("name").GetString() == name).TryGetProperty("browser_download_url", out var value) ? value.GetString() : null;
-            string? url = Url(asset), checksum = Url(asset + ".sha256"); if (url == null || checksum == null) throw new IOException("该版本的 Linux 安装包尚未就绪。");
-            if (!await Confirm("发现新版本", "发现蓝色大肥鱼 " + latest.ToString(3) + "，是否下载并安装更新？", "下载更新")) return;
-            string hash = (await client.GetStringAsync(checksum)).Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)[0].ToLowerInvariant();
-            if (!Regex.IsMatch(hash, "^[a-f0-9]{64}$")) throw new IOException("更新校验信息无效。");
-            string package = Path.Combine(Environment.CurrentDirectory, "cache/updates", asset);
-            await ArtifactDownload.Download(url, package, hash);
+            var update = await BigBlueFish.Deployment.UpdateService.Check(typeof(LinuxPetWindow).Assembly.GetName().Version!.ToString(3), linux: true);
+            updateStatus = update == null ? "当前已经是最新版本。" : "发现新版本 " + update.Version;
+            if (update == null) { if (manual) await Confirm("检查更新", updateStatus, "知道了"); return; }
+            if (!manual) return;
+            if (!await Confirm("发现新版本", updateStatus + "，是否下载并安装更新？", "下载更新")) return;
+            string package = Path.Combine(Environment.CurrentDirectory, "cache/updates", update.Name);
+            await ArtifactDownload.Download(update.Url, package, update.Sha256);
             var start = new ProcessStartInfo("/usr/bin/pkexec") { UseShellExecute = false };
             foreach (string item in new[] { "/usr/bin/apt-get", "install", "-y", package }) start.ArgumentList.Add(item);
             using var installer = Process.Start(start) ?? throw new IOException("无法启动系统安装器。");
             await installer.WaitForExitAsync(); if (installer.ExitCode != 0) throw new IOException("更新安装未完成，可再次检查更新后重试。");
             var restart = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "BigBlueFish.Linux")) { UseShellExecute = false };
             restart.ArgumentList.Add("--wait-for-exit"); restart.ArgumentList.Add(Environment.ProcessId.ToString()); Process.Start(restart); CloseImmediately();
-        } catch (Exception error) { if (manual) await Confirm("检查更新", error.Message, "知道了"); }
+        } catch (Exception error) { updateStatus = error.Message; if (manual) await Confirm("检查更新", updateStatus, "知道了"); }
         finally { updateChecking = false; }
     }
 }

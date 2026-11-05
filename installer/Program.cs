@@ -214,6 +214,7 @@ internal sealed class InstallerForm : ModernWindow
                 || relative.StartsWith("cache/", StringComparison.OrdinalIgnoreCase)
                 || relative.StartsWith("preferences.json", StringComparison.OrdinalIgnoreCase)
                 || relative.StartsWith("model-selection.json", StringComparison.OrdinalIgnoreCase)
+                || relative.Equals("cloud.json", StringComparison.OrdinalIgnoreCase)
                 || relative is "news-last-day.txt" or "companion.lock" or "ready.status"
                     or "companion-errors.log" or "test-command.txt" or "test-status.json"
                     or "ocr-status.json" or "vision-status.json" or "vision-input.jpg";

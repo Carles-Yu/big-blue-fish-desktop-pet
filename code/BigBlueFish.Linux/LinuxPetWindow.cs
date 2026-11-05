@@ -34,7 +34,7 @@ internal sealed partial class LinuxPetWindow : Window
     DateTime nextSpeech = DateTime.UtcNow.AddSeconds(45), nextEvent = DateTime.MaxValue, nextWarmup;
     DateTime bubbleUntil = DateTime.MaxValue;
     IntPtr lastForeground;
-    bool closed, exitReady, hidden, fullscreenHidden, dragging, dragged, generating, streamed, externalSpeech, typing, modelReply, greetingNoticeActive;
+    bool closed, exitReady, hidden, fullscreenHidden, dragging, dragged, generating, streamed, externalSpeech, typing, modelReply, greetingNoticeActive, balanceBusy;
     long speechVersion;
     int[] textBoundaries = [];
     PixelPoint dragOrigin, windowOrigin, moveOrigin;
@@ -54,7 +54,10 @@ internal sealed partial class LinuxPetWindow : Window
         mutex = new Mutex(true, "BigBlueFish.Linux." + Environment.UserName, out var first);
         if (!first) Environment.Exit(0);
         quietHours = new CompanionQuietHours(Preferences);
-        brain = new() { UseCloud = Preferences.CloudSelected, StopCloudOnBattery = Preferences.StopCloudOnBattery, UseGpu = Preferences.GpuEnabled, StopOnBattery = Preferences.StopModelOnBattery, WeatherRegionCode = Preferences.WeatherRegionCode };
+        appliedSettings = CompanionSettingsSnapshot.From(Preferences); appliedCloud = CompanionCloud.TryLoad();
+        brain = new() { UseCloud = Preferences.CloudSelected, StopCloudOnBattery = Preferences.StopCloudOnBattery, UseGpu = Preferences.GpuEnabled, StopOnBattery = Preferences.StopModelOnBattery, WeatherRegionCode = Preferences.WeatherRegionCode,
+            MemoryContext = (scene, cloud, kind) => companionMemory is { Enabled: true } ? companionMemory.Prompt(scene, cloud, kind) : "" };
+        if (Preferences.MemoryEnabled || Preferences.SyncEnabled) try { EnsureLinuxMemory(); } catch (Exception) { }
         Title = "蓝色大肥鱼"; WindowDecorations = WindowDecorations.None; ShowInTaskbar = false; ShowActivated = false;
         Topmost = true; CanResize = false; Background = Brushes.Transparent; TransparencyLevelHint = [WindowTransparencyLevel.Transparent];
         var canvas = new Grid(); canvas.Children.Add(sprite); canvas.Children.Add(loading); Content = canvas;
@@ -120,7 +123,7 @@ internal sealed partial class LinuxPetWindow : Window
             speechVersion++; brain.Stop(); moveRule = null; settings?.Close(); hidden = false; fullscreenHidden = false; Show(); player.Paused = false;
             Play(policy.Find("女仆屈膝礼仪"), "Exit"); ShowText("主人再见~鱼鱼喜欢主人哦", false, true);
         };
-        Closed += (_, _) => { closed = true; timer.Stop(); StopMcp(); brain.Dispose(); player.Dispose(); bubbleWindow.Close(); settings?.Close(); Save(); mutex.Dispose(); (Avalonia.Application.Current!.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)!.Shutdown(); };
+        Closed += (_, _) => { closed = true; timer.Stop(); memorySyncLoop?.Cancel(); StopMcp(); brain.Dispose(); companionMemory?.Dispose(); player.Dispose(); bubbleWindow.Close(); settings?.Close(); memoryWindow?.Close(); chatWindow?.Close(); Save(); mutex.Dispose(); (Avalonia.Application.Current!.ApplicationLifetime as IClassicDesktopStyleApplicationLifetime)!.Shutdown(); };
         timer.Tick += async (_, _) => await Tick();
     }
     CompanionAnimationContext Context() => new(DateTime.Now, BreakfastHour: Preferences.BreakfastHour, LunchHour: Preferences.LunchHour, DinnerHour: Preferences.DinnerHour);
@@ -137,7 +140,12 @@ internal sealed partial class LinuxPetWindow : Window
         var result = new PixelPoint((int)Math.Clamp(target.X, area.X - left, Math.Max(area.X - left, area.Right - right)), (int)Math.Clamp(target.Y, area.Y - top, Math.Max(area.Y - top, area.Bottom - bottom)));
         Position = result; MoveBubble(); return result;
     }
-    void Save() { if (closed) return; Preferences.Left = Position.X; Preferences.Top = Position.Y; Preferences.Save(); }
+    void Save() {
+        if (closed) return;
+        Preferences.Left = Position.X; Preferences.Top = Position.Y;
+        try { Preferences.Save(); appliedSettings = CompanionSettingsSnapshot.From(Preferences); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { _ = Confirm("设置未保存", "无法保存设置，请检查目录权限后重试。", "知道了"); }
+    }
     void Play(CompanionAnimationRule rule, string nextPhase, bool mirror = false)
     {
         if (closed) return;
@@ -291,8 +299,22 @@ internal sealed partial class LinuxPetWindow : Window
         var menu = new ContextMenu();
         MenuItem Item(string title, Action action, bool available = true) { var item = new MenuItem { Header = title, IsEnabled = available }; item.Click += (_, _) => action(); return item; }
         menu.ItemsSource = new[] { Item("设置", OpenSettings), Item("天气", async () => await Speak(true), !Puppet), Item("吐字测试", async () => await Speak(false), !Puppet),
-            Item(quietHours.MenuLabel, ToggleQuietHours), Item(hidden ? "显示桌宠" : "隐藏桌宠", () => { if (hidden) { hidden = false; Show(); Clamp(); } else { hidden = true; Hide(); bubbleWindow.Hide(); speechVersion++; brain.CancelGeneration(); } }), Item("关闭桌宠", Close) };
+            Item("看看余额", () => { _ = SayBalance(); }), Item(quietHours.MenuLabel, ToggleQuietHours), Item(hidden ? "显示桌宠" : "隐藏桌宠", () => { if (hidden) { hidden = false; Show(); Clamp(); } else { hidden = true; Hide(); bubbleWindow.Hide(); speechVersion++; brain.CancelGeneration(); } }), Item("关闭桌宠", Close) };
         ContextMenu = menu; menu.Open(this);
+    }
+    async Task SayBalance()
+    {
+        if (balanceBusy || closed) return;
+        balanceBusy = true;
+        try
+        {
+            if (hidden) { hidden = false; Show(); Clamp(); }
+            ShowText("主人，鱼鱼去看看还剩多少～", false, true);
+            var report = await CompanionCloud.QueryBalance();
+            if (closed || hidden || fullscreenHidden) return;
+            ShowText(report.Speech, false);
+        }
+        finally { balanceBusy = false; }
     }
     void CloseImmediately() { exitReady = true; Close(); }
 }

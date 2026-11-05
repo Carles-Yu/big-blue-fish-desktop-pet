@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: fish
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: fish
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+  api:
+    build:
+      context: ../..
+      dockerfile: server/deploy/Dockerfile
+    environment:
+      SYNC_DATABASE_URL: Host=db;Username=fish;Password=${POSTGRES_PASSWORD};Database=fish
+      SYNC_ADMIN_TOKEN: ${SYNC_ADMIN_TOKEN}
+    depends_on:
+      - db
+    expose:
+      - "8080"
+    restart: unless-stopped
+  caddy:
+    image: caddy:2
+    environment:
+      SYNC_DOMAIN: ${SYNC_DOMAIN}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy:/data
+    depends_on:
+      - api
+    restart: unless-stopped
+volumes:
+  pgdata:
+  caddy:

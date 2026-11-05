@@ -1,8 +1,10 @@
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
 
 namespace BigBlueFish.Windows;
@@ -67,9 +69,27 @@ internal sealed class CompanionMenuDismissal : IDisposable
     internal void DismissOutside(Point physicalPoint)
     {
         if (!menu.IsOpen || PresentationSource.FromVisual(menu) == null) return;
-        var first = menu.PointToScreen(new Point(0, 0));
-        var last = menu.PointToScreen(new Point(menu.ActualWidth, menu.ActualHeight));
-        if (!new Rect(first, last).Contains(physicalPoint)) menu.IsOpen = false;
+        if (!Contains(menu, physicalPoint)) menu.IsOpen = false;
+    }
+
+    private static bool Contains(ItemsControl items, Point physicalPoint)
+    {
+        if (PresentationSource.FromVisual(items) != null)
+        {
+            var first = items.PointToScreen(new Point(0, 0));
+            var last = items.PointToScreen(new Point(items.ActualWidth, items.ActualHeight));
+            if (new Rect(first, last).Contains(physicalPoint)) return true;
+        }
+        foreach (var item in items.Items.OfType<MenuItem>())
+        {
+            if (!item.IsSubmenuOpen || item.Template?.FindName("SubmenuPopup", item) is not Popup { Child: FrameworkElement child } || !child.IsVisible
+                || PresentationSource.FromVisual(child) == null)
+                continue;
+            var origin = child.PointToScreen(new Point(0, 0));
+            var end = child.PointToScreen(new Point(child.ActualWidth, child.ActualHeight));
+            if (new Rect(origin, end).Contains(physicalPoint)) return true;
+        }
+        return false;
     }
 
     public void Dispose()

@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Text.Json;
 using Avalonia.Threading;
 using Avalonia;
@@ -25,7 +25,7 @@ internal sealed partial class LinuxPetWindow
     bool McpInputAvailable => Preferences.McpEnabled && Preferences.McpChatEnabled && (mcpServer?.Connections ?? 0) > 0;
     void InitializeMcp()
     {
-        if (Preferences.McpEnabled) mcpServer ??= new ControlServer(ExecuteMcp);
+        if (Preferences.McpEnabled) mcpServer ??= new ControlServer(ExecuteMcp, tools: ControlTools.Definitions.Where(t => JsonSerializer.SerializeToElement(t).GetProperty("name").GetString() is not ("ask_user" or "notify_task")).ToArray());
         if (Puppet) brain.Stop();
     }
     void StopMcp() { consentWindow?.Close(); mcpInput?.Close(); mcpServer?.Dispose(); mcpServer = null; externalActions.Clear(); nextExternalText = null; }
@@ -108,6 +108,7 @@ internal sealed partial class LinuxPetWindow
         if (values.TryGetValue("Left", out var left) && left is double x) position = new((int)x, position.Y);
         if (values.TryGetValue("Top", out var top) && top is double y) position = new(position.X, (int)y);
         ApplySettings(position);
+        Preferences.Save();
         refreshLinuxSettings?.Invoke();
     }
     bool TryOpenMcpInput()

@@ -1,0 +1,10 @@
+[Unit]
+Description=Authenticated encrypted Big Blue Fish database backup
+After=postgresql@16-main.service
+Requires=postgresql@16-main.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/bigbluefish-sync/maintenance/backup.py backup
+UMask=0077
+PrivateTmp=true

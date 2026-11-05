@@ -86,10 +86,10 @@ internal static class InstallationLifecycle
         key.SetValue("DisplayName", "蓝色大肥鱼");
 #endif
         key.SetValue("DisplayVersion", FileVersionInfo.GetVersionInfo(Path.Combine(target, ApplicationName)).ProductVersion ?? typeof(InstallationLifecycle).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion);
-        key.SetValue("Publisher", "Bai-Cute");
+        key.SetValue("Publisher", BigBlueFish.Deployment.ReleaseIdentity.Label + " / " + BigBlueFish.Deployment.ReleaseIdentity.Maintainer);
         key.SetValue("InstallLocation", target);
         key.SetValue("DisplayIcon", Path.Combine(target, "BigBlueFish.ico"));
-        key.SetValue("URLInfoAbout", "https://github.com/Bai-Cute/big-blue-fish-desktop-pet");
+        key.SetValue("URLInfoAbout", BigBlueFish.Deployment.ReleaseIdentity.Repository);
         key.SetValue("UninstallString", $"\"{Path.Combine(target, UninstallerName)}\" --uninstall \"{target}\"");
         key.SetValue("NoModify", 1, RegistryValueKind.DWord);
         key.SetValue("NoRepair", 1, RegistryValueKind.DWord);

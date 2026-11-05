@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO.Pipes;
 using System.Text;
 using System.Text.Json;
@@ -14,11 +14,12 @@ public sealed class ControlServer : IDisposable
     private readonly Func<string, JsonElement, CancellationToken, Task<object>> execute;
     private readonly ConcurrentQueue<object> recent = new();
     private readonly string pipe;
+    private readonly object[] tools;
     private long nextSession, sequence;
     public string? LastConnectionError { get; private set; }
     public int Connections => sessions.Values.Count(s => s.Initialized && !s.Closed);
-    public ControlServer(Func<string, JsonElement, CancellationToken, Task<object>> execute, string? pipeName = null)
-    { this.execute = execute; pipe = pipeName ?? ControlTools.PipeName; _ = Task.Run(Accept); }
+    public ControlServer(Func<string, JsonElement, CancellationToken, Task<object>> execute, string? pipeName = null, object[]? tools = null)
+    { this.tools = tools ?? ControlTools.Definitions; this.execute = execute; pipe = pipeName ?? ControlTools.PipeName; _ = Task.Run(Accept); }
     private async Task Accept()
     {
         while (!lifetime.IsCancellationRequested)
@@ -145,14 +146,14 @@ public sealed class ControlServer : IDisposable
                 var version = args.TryGetProperty("protocolVersion", out var requested) && requested.GetString() == "2025-03-26" ? "2025-03-26" : "2025-11-25";
                 Result(id, new { protocolVersion = version, capabilities = new { tools = new { listChanged = false }, logging = new { }, resources = new { subscribe = true, listChanged = false } },
                     serverInfo = new { name = "BigBlueFish", version = typeof(ControlServer).Assembly.GetName().Version!.ToString(3) },
-                    instructions = "控制用户本机的蓝色大肥鱼。先读get_settings与工具schema；AnimationIntervalSeconds只接受30–300整数秒，SpeechMinMinutes是枚举档位。say/say_next显示你提供的原文，不能把成功回执当作已读或播放完成。点击、拖动及双击输入的user_message（detail.text为原文）通过notifications/message推送，logger为bigbluefish.interaction、level为info；需接收info日志，或订阅并读取bigbluefish://interactions。客户端自行安排收到事件后的模型调用，本服务不会自动启动你的Agent轮次。资源只保留最近128条内存事件，按sequence去重，断线不保证补齐。截图会把屏幕内容交给当前客户端；ForegroundEnabled仅控制内置读屏，不限制MCP截图。开启PuppetMode需真实用户确认，等待期间其他控制与拖动可继续；模式在断开后保持，需显式关闭才能恢复自主功能。修改设置不会打开或激活设置窗口。多个客户端共享状态和队列，没有独占锁。" });
+                    instructions = "控制用户本机的蓝色大肥鱼。Windows监工：真实任务结束用notify_task；需要选择或填写用ask_user，submitted才表示提交，cancelled/expired绝不表示同意。ask_user答案仅随调用返回，不在交互资源广播。这里只响应Agent主动调用，不会自动观察其他软件任务。先读get_settings与工具schema；AnimationIntervalSeconds只接受30–300整数秒，SpeechMinMinutes是枚举档位。say/say_next显示你提供的原文，不能把成功回执当作已读或播放完成。点击、拖动及双击输入的user_message（detail.text为原文）通过notifications/message推送，logger为bigbluefish.interaction、level为info；需接收info日志，或订阅并读取bigbluefish://interactions。客户端自行安排收到事件后的模型调用，本服务不会自动启动你的Agent轮次。资源只保留最近128条内存事件，按sequence去重，断线不保证补齐。截图会把屏幕内容交给当前客户端；ForegroundEnabled仅控制内置读屏，不限制MCP截图。开启PuppetMode需真实用户确认，等待期间其他控制与拖动可继续；模式在断开后保持，需显式关闭才能恢复自主功能。修改设置不会打开或激活设置窗口。多个客户端共享状态和队列，没有独占锁。" });
                 return Task.CompletedTask;
             }
             if (method == "ping") { Result(id, new { }); return Task.CompletedTask; }
             if (!Initialized) { Error(id, -32002, "MCP 尚未初始化。"); return Task.CompletedTask; }
             switch (method)
             {
-                case "tools/list": Result(id, new { tools = ControlTools.Definitions }); break;
+                case "tools/list": Result(id, new { tools = owner.tools }); break;
                 case "resources/list": Result(id, new { resources = new[] { new { uri = "bigbluefish://interactions", name = "用户交互与输入", mimeType = "application/json" } } }); break;
                 case "resources/read":
                     if (!args.TryGetProperty("uri", out var uri) || uri.GetString() != "bigbluefish://interactions") Error(id, -32602, "未知资源。");
@@ -180,7 +181,7 @@ public sealed class ControlServer : IDisposable
             try
             {
                 var name = args.GetProperty("name").GetString()!;
-                if (!ControlTools.Definitions.Any(t => JsonSerializer.SerializeToElement(t).GetProperty("name").GetString() == name)) throw new ArgumentException("未知工具。");
+                if (!owner.tools.Any(t => JsonSerializer.SerializeToElement(t).GetProperty("name").GetString() == name)) throw new ArgumentException("未知工具。");
                 var parameters = args.TryGetProperty("arguments", out var a) ? a : JsonSerializer.SerializeToElement(new { });
                 Result(id, await owner.execute(name, parameters, cancel.Token));
             }

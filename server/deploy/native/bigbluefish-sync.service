@@ -1,0 +1,33 @@
+[Unit]
+Description=Big Blue Fish private memory sync
+After=network-online.target postgresql@16-main.service
+Wants=network-online.target
+Requires=postgresql@16-main.service
+StartLimitIntervalSec=120
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=fishsync
+Group=fishsync
+WorkingDirectory=/var/lib/bigbluefish-sync
+EnvironmentFile=/etc/bigbluefish-sync/server.env
+Environment=DOTNET_ROOT=/opt/bigbluefish-sync/dotnet
+ExecStart=/opt/bigbluefish-sync/current/BigBlueFish.SyncServer
+Restart=on-failure
+RestartSec=5
+StateDirectory=bigbluefish-sync
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
