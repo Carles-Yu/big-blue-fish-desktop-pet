@@ -356,10 +356,7 @@ public partial class MainWindow
         Button("隐藏到任务栏通知区", HideCompanion);
         Button("回到右下角", () =>
         {
-            var a = SystemParameters.WorkArea;
-            Left = a.Right - Width - 8;
-            Top = a.Bottom - Height + 12;
-            ClampCompanion();
+            CompanionEdgeLayout.PlaceAtWorkAreaBottomRight(this);
             anchor = new Point(Left, Top);
             SaveCompanion();
         });

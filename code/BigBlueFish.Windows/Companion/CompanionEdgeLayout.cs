@@ -1,11 +1,9 @@
 using System;
 using System.ComponentModel;
-using System.Drawing;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Forms;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
@@ -222,18 +220,34 @@ public static class CompanionEdgeLayout
     public static Rect WorkArea(Window w)
     {
         DpiScale dpi = VisualTreeHelper.GetDpi(w);
-        Rect petBounds = PetBounds(w);
         if (PresentationSource.FromVisual(w) != null)
         {
+            Rect petBounds = PetBounds(w);
             System.Windows.Point screenCenter = w.PointToScreen(new System.Windows.Point(petBounds.Left + petBounds.Width / 2.0, petBounds.Top + petBounds.Height / 2.0));
-            Rectangle workingArea = Screen.FromPoint(new System.Drawing.Point((int)screenCenter.X, (int)screenCenter.Y)).WorkingArea;
-            System.Windows.Point localTopLeft = w.PointFromScreen(new System.Windows.Point(workingArea.Left, workingArea.Top));
-            System.Windows.Point localBottomRight = w.PointFromScreen(new System.Windows.Point(workingArea.Right, workingArea.Bottom));
-            return new Rect(w.Left + localTopLeft.X, w.Top + localTopLeft.Y, localBottomRight.X - localTopLeft.X, localBottomRight.Y - localTopLeft.Y);
+            if (BigBlueFish.Windows.CompanionNative.TryGetMonitorWorkAreaFromPoint((int)Math.Round(screenCenter.X), (int)Math.Round(screenCenter.Y), out var workingArea)
+                || BigBlueFish.Windows.CompanionNative.TryGetMonitorWorkAreaFromWindow(new WindowInteropHelper(w).Handle, out workingArea))
+            {
+                System.Windows.Point localTopLeft = w.PointFromScreen(new System.Windows.Point(workingArea.Left, workingArea.Top));
+                System.Windows.Point localBottomRight = w.PointFromScreen(new System.Windows.Point(workingArea.Right, workingArea.Bottom));
+                return new Rect(w.Left + localTopLeft.X, w.Top + localTopLeft.Y, localBottomRight.X - localTopLeft.X, localBottomRight.Y - localTopLeft.Y);
+            }
         }
 
-        Rectangle primaryArea = (Screen.PrimaryScreen ?? throw new InvalidOperationException("无法找到主显示器")).WorkingArea;
-        return new Rect((double)primaryArea.Left / dpi.DpiScaleX, (double)primaryArea.Top / dpi.DpiScaleY, (double)primaryArea.Width / dpi.DpiScaleX, (double)primaryArea.Height / dpi.DpiScaleY);
+        if (BigBlueFish.Windows.CompanionNative.TryGetPrimaryMonitorWorkArea(out var primaryArea))
+        {
+            return new Rect((double)primaryArea.Left / dpi.DpiScaleX, (double)primaryArea.Top / dpi.DpiScaleY, (double)(primaryArea.Right - primaryArea.Left) / dpi.DpiScaleX, (double)(primaryArea.Bottom - primaryArea.Top) / dpi.DpiScaleY);
+        }
+
+        return SystemParameters.WorkArea;
+    }
+
+    public static void PlaceAtWorkAreaBottomRight(Window w)
+    {
+        Rect area = WorkArea(w);
+        Rect petBounds = PetBounds(w);
+        w.Left = area.Right - petBounds.Right;
+        w.Top = area.Bottom - petBounds.Bottom;
+        Clamp(w);
     }
 
     private static double Limit(double v, double min, double max)

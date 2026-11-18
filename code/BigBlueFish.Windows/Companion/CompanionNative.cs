@@ -42,6 +42,14 @@ internal static class CompanionNative
     internal static extern IntPtr SetStyle(IntPtr h, int n, IntPtr v);
     [DllImport("user32.dll")]
     internal static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+    private const uint MonitorDefaultToPrimary = 1;
+    private const uint MonitorDefaultToNearest = 2;
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(Point pt, uint flags);
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetMonitorInfoW")]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
     [StructLayout(LayoutKind.Sequential)]
     internal struct Rect
     {
@@ -65,6 +73,47 @@ internal static class CompanionNative
     {
         public byte AC, Battery, Percent, Reserved;
         public uint Life, FullLife;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfo
+    {
+        public int Size;
+        public Rect Monitor;
+        public Rect Work;
+        public uint Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+    }
+
+    internal static bool TryGetMonitorWorkAreaFromPoint(int x, int y, out Rect work)
+    {
+        return TryGetMonitorWorkArea(MonitorFromPoint(new Point { X = x, Y = y }, MonitorDefaultToNearest), out work);
+    }
+
+    internal static bool TryGetMonitorWorkAreaFromWindow(IntPtr hwnd, out Rect work)
+    {
+        return TryGetMonitorWorkArea(MonitorFromWindow(hwnd, MonitorDefaultToNearest), out work);
+    }
+
+    internal static bool TryGetPrimaryMonitorWorkArea(out Rect work)
+    {
+        return TryGetMonitorWorkArea(MonitorFromPoint(new Point { X = 0, Y = 0 }, MonitorDefaultToPrimary), out work);
+    }
+
+    private static bool TryGetMonitorWorkArea(IntPtr monitor, out Rect work)
+    {
+        work = default;
+        if (monitor == IntPtr.Zero)
+            return false;
+        var info = new MonitorInfo
+        {
+            Size = Marshal.SizeOf<MonitorInfo>()
+        };
+        if (!GetMonitorInfo(monitor, ref info))
+            return false;
+        work = info.Work;
+        return true;
     }
 
     internal static bool OnAC => TestPowerOverride ?? (GetSystemPowerStatus(out var p) && p.AC == 1);

@@ -174,12 +174,21 @@ public partial class MainWindow
         speech = new CompanionSpeech(bubbleText, bubble, () => CompanionEdgeLayout.Refresh(this), ResetBubbleDeadline);
         Content = companionLayout;
         ApplyCompanionScale(false);
-        var a = SystemParameters.WorkArea;
-        Left = preferences.Left ?? (a.Right - Width - 12);
-        Top = preferences.Top ?? (a.Bottom - Height + 15);
-        ClampCompanion();
+        ApplyInitialCompanionPlacement();
         anchor = new Point(Left, Top);
-        SourceInitialized += (_, _) => InstallCompanionHook();
+        SourceInitialized += (_, _) =>
+        {
+            InstallCompanionHook();
+            if (preferences.Left is null || preferences.Top is null)
+            {
+                ApplyInitialCompanionPlacement();
+                anchor = new Point(Left, Top);
+            }
+            else
+            {
+                ClampCompanion();
+            }
+        };
         Loaded += async (_, _) =>
         {
             InstallCompanionHook();
@@ -356,6 +365,15 @@ public partial class MainWindow
             Math.Max(0, Height - SpriteSize + SpriteSize * 50 / 360),
             0,
             0);
+    }
+
+    private void ApplyInitialCompanionPlacement()
+    {
+        var area = CompanionEdgeLayout.WorkArea(this);
+        var petBounds = CompanionEdgeLayout.PetBounds(this);
+        Left = preferences.Left ?? (area.Right - petBounds.Right);
+        Top = preferences.Top ?? (area.Bottom - petBounds.Bottom);
+        ClampCompanion();
     }
 
     private void ClampCompanion() => CompanionEdgeLayout.Clamp(this);
