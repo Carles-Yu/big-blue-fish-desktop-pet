@@ -1,4 +1,4 @@
-# 蓝色大肥鱼 1.0.1 行为规格
+# 蓝色大肥鱼 1.1.0 行为规格
 
 ## 运行平台与发行类型
 
@@ -65,13 +65,21 @@ OCR 在本机执行；Cloud 模式将识别文字发送至配置接口，当前�
 
 左键点击触发点击池动作。左键按住并移动超过拖动阈值后移动窗口；Windows 使用按 DPI 换算后的位移，Linux 使用屏幕像素位移。普通模式拖动时播放悬空片段，松开后结束拖动状态、保存位置，并恢复调度。角色透明像素不占用普通桌面点击区域；Windows 使用素材透明度命中测试，Linux 更新 X11 输入形状。
 
-角色右键菜单提供设置、天气、吐字测试、隐藏桌宠和安静一小时；托盘菜单还提供显示桌宠和关闭桌宠。右键菜单在点击菜单外部区域时关闭。隐藏后可以从托盘恢复；托盘左键也可恢复显示。用户隐藏与全屏自动隐藏分别记录，全屏结束只恢复由全屏条件隐藏且没有被用户主动隐藏的桌宠。退出开始后关闭模型安装和更新窗口，取消其进行中的传输或导入；关闭流程不再接受显示、隐藏或打开设置的操作，最终清理托盘与后台资源。
+角色右键菜单提供设置、天气、吐字测试、看看余额、隐藏桌宠、安静一小时，以及额度查询；托盘菜单还提供显示桌宠和关闭桌宠。Windows 的额度查询二级菜单依次为 Codex、Cursor 和 Gemini；Linux 没有额度查询菜单。右键菜单在点击菜单外部区域时关闭。隐藏后可以从托盘恢复；托盘左键也可恢复显示。用户隐藏与全屏自动隐藏分别记录，全屏结束只恢复由全屏条件隐藏且没有被用户主动隐藏的桌宠。退出开始后关闭模型安装和更新窗口，取消其进行中的传输或导入；关闭流程不再接受显示、隐藏或打开设置的操作，最终清理托盘与后台资源。
 
 Windows 托盘使用独立的隐藏原生消息窗口与安装路径对应的稳定标识；标识取程序目录规范化绝对路径转大写后的 SHA256 前16字节。图标从随程序的 BigBlueFish.ico 读取32×32尺寸，悬停文字为“蓝色大肥鱼”。注册时先请求添加，失败后尝试修改已有图标，按系统调用的实际返回值记录是否注册成功。添加失败时每3秒重试并记录一次错误及 Win32 错误码；恢复后记录恢复状态。注册成功后每30秒查询系统图标位置，图标丢失时重新注册；Explorer 通知任务栏重建时立即重新注册。隐藏角色不会移除托盘。托盘左键或双击恢复角色，右键打开同样的现代风格菜单，更新通知点击后打开更新窗口；退出时移除图标、停止重试计时并释放消息窗口、图标及菜单。
 
 Windows 设置分为陪伴与外观、说话与天气、模型与供电，以及标准版的 Agent 与 MCP。Linux 设置分为桌宠与显示、模型与信息、动作与作息、关于与更新，以及标准版的 Agent 与 MCP。天气地区按省、市、区县三级选择。尺寸、作息、供电、联网、模型、全屏隐藏、启动更新等设置保存并生效。
 
 MCP 修改设置不打开、关闭或激活设置窗口。窗口已经打开时在原窗口内刷新控件，保留当前页面、滚动位置、窗口位置与最小化或最大化状态；普通设置变更不抢占当前应用的输入焦点，不改变窗口置顶状态。用户显式打开设置时才执行恢复和激活。首次启用提线木偶模式仍显示需要用户确认的告知弹窗。
+
+## 额度查询
+
+Windows 角色右键与托盘的「额度查询」打开独立面板，只在打开或点击刷新时查询，没有后台轮询或弹出的低额度提醒。卡片显示剩余百分比或积分说明、按本机时区换算的重置时间、更新时间；剩余不超过 20% 时在卡片内标记「余量较低」。刷新失败时保留上次成功结果并标明尚未刷新；缺少的数据展示「未知」，不是 0 或无限量。退出或隐藏桌宠时关闭这些面板。
+
+Gemini 额度使用本机已登录的官方 Antigravity 命令行 `agy`，依次执行只读命令 `agy -p "/usage" --output-format json` 与 `agy -p "/credits" --output-format json`，读取 `command.data`。按模型组显示 weekly 与 5 小时窗口的剩余比例和重置时间；积分为单独卡片，只显示剩余积分数，不把整数伪装成百分比。路径依次为环境变量 `BIGBLUEFISH_AGY_PATH`、PATH 中的 `agy.exe`、当前用户目录下 `.gemini/bin/agy.exe`。显式路径必须是存在的绝对 `agy.exe`；无效时给出中文错误，不静默改用其他程序。每次查询启动隐藏子进程，约 30 秒超时，完成后关闭并回收进程树；关闭面板即取消查询。不在界面或日志中展示命令原文、标准错误或服务端原始错误，不读取凭据文件，额度不进入聊天或记忆。官方参考：[Usage](https://antigravity.google/docs/cli/commands/usage/)。Codex、Cursor 与 Gemini 的数据来源见 [Codex 额度查询](CODEX_QUOTA.md)、[Cursor 额度查询](CURSOR_QUOTA.md) 与 [Gemini 额度查询](GEMINI_QUOTA.md)。
+
+Cursor 额度继续查询 `https://cursor.com/api/usage-summary`，只在打开面板或刷新时请求。官方 `cursor` 编辑器命令行和 Agent CLI 目前没有文档化的非交互只读额度命令（`/usage` 仅用于交互式 Agent 会话），团队 Admin API 也不适用于本机个人登录。因此读取本机 `%APPDATA%\Cursor\User\globalStorage\state.vscdb` 中只读的 `cursorAuth/accessToken`；若为 `cursor-safe-storage:v1`，使用当前 Windows 账户的 DPAPI 从 `%APPDATA%\Cursor\Local State` 解锁 Chromium OSCrypt 密钥后再解密。令牌、密钥与密文不写入日志、界面、聊天或记忆。详见 [Cursor 额度查询](CURSOR_QUOTA.md)。
 
 ## 气泡、加载与文字显示
 
@@ -83,7 +91,7 @@ MCP 修改设置不打开、关闭或激活设置窗口。窗口已经打开时�
 
 ## 普通模式的动画状态机
 
-动画素材为106个透明 WebM 片段，解码为带透明度的帧后显示。正常播放以24帧/秒的片段时序推进；无打断时，在完整片段边界决定后续动作。隐藏期间暂停动画时钟和帧推进。进入新动作会取消旧解码任务。Linux 的数据读取和解码结果读取在后台进行，显示帧显式交给界面线程。
+动画素材为114个透明 WebM 片段，解码为带透明度的帧后显示。三个睡觉阶段片段不参与自动选择，可通过 MCP 分别指定；播放「睡觉-开始」结束后不会自动接上循环或起床，需要自行按顺序排队。正常播放以24帧/秒的片段时序推进；无打断时，在完整片段边界决定后续动作。隐藏期间暂停动画时钟和帧推进。进入新动作会取消旧解码任务。开发态由 code/run.ps1 把构建产物同步到仓库根目录 .work/dev-run 再启动，并把 assets 连接到源码资源目录，不从工程 bin\\Release 直接运行，以免 dotnet clean 或重新编译清掉正在运行的素材与解码器。某一段动画解码失败时，若解码器和「待机呼吸休闲」素材仍可用，会记录错误并回到待机，不把整只鱼卡死；基础待机也失败或解码器缺失时，才停止播放并提示检查动画组件。companion-errors.log 改为追加写入，ffmpeg 标准错误按 UTF-8 读取。Linux 的数据读取和解码结果读取在后台进行，显示帧显式交给界面线程。
 
 普通启动播放“女仆屈膝礼仪”，速度为1.5倍，并立即显示欢迎词：`主人早上/中午/下午/晚上好，鱼鱼给主人请安啦~`。5:00–10:59为早上，11:00–13:59为中午，14:00–17:59为下午，其余为晚上。欢迎词随启动行礼结束而收起。普通关闭时播放相同的1.5倍行礼，并显示 `主人再见~鱼鱼喜欢主人哦`，动作结束后退出。两句均不等待模型加载。
 
@@ -177,7 +185,7 @@ MCP 确认窗口通过异步等待用户结果，不使用禁用整个应用的�
 | --- | --- |
 | get_settings | 返回全部持久化字段、StartupEnabled，以及可见性、动作、队列、连接数、输入框和模型状态 |
 | update_settings | settings 对象按字段修改并保存；先验证整个补丁，字段错误时不应用其中任意一项 |
-| list_actions | 列出106个动作的精确名称、原池、基础权重与片段时长 |
+| list_actions | 列出114个动作的精确名称、原池、基础权重与片段时长 |
 | capture_foreground | 按前台规则捕获并返回 PNG；可传 max_dimension |
 | capture_screen | 捕获整个虚拟桌面并返回 PNG；可传 max_dimension |
 | play_action | action 为精确动作名；当前片段完整结束后依次播放，队列最多100个 |
@@ -245,9 +253,9 @@ Linux 通过标准或无MCP版 .deb 安装到 /opt/bigbluefish，注册 bigbluef
 
 ## 版本与构建工具行为
 
-根目录 Version.props 指定产品版本1.0.1，文件版本与程序集版本为1.0.1.0；Windows、Linux、MCP桥接程序、安装器与卸载器从同一版本属性生成。CompanionEdition 为 Standard 或 Safe，Safe 对应无MCP版；当前标准发行采用 OCR 读屏。
+根目录 Version.props 指定产品版本1.1.0，文件版本与程序集版本为1.1.0.0；Windows、Linux、MCP桥接程序、安装器与卸载器从同一版本属性生成。CompanionEdition 为 Standard 或 Safe，Safe 对应无MCP版；当前标准发行采用 OCR 读屏。
 
-PowerShell 构建与测试脚本以带 BOM 的 UTF-8 保存，兼容 Windows PowerShell 对中文脚本的读取。PowerShellEncodingVerification.ps1 枚举 Git 已跟踪及未忽略的 .ps1 文件，检查 UTF-8 BOM 并通过 PowerShell 语法解析器读取；检查失败抛出错误。code/test.ps1 在其他检查前调用此脚本。
+PowerShell 构建与测试脚本以带 BOM 的 UTF-8 保存，兼容 Windows PowerShell 对中文脚本的读取。PowerShellEncodingVerification.ps1 枚举 Git 已跟踪及未忽略的 .ps1 文件，检查 UTF-8 BOM 并通过 PowerShell 语法解析器读取；检查失败抛出错误。code/test.ps1 在其他检查前调用此脚本。默认会先运行不依赖退出桌宠的快速检查（动画规则、记忆、聊天搜索、Codex/Cursor/Gemini 额度、监工协议与界面、以及开发启动目录脚本），再在桌宠退出后执行实窗测试。仅需快速检查时使用 test.ps1 -Fast。构建与测试脚本优先使用 %LOCALAPPDATA%\\BigBlueFish-dev\\dotnet 中的 .NET 10 SDK，也可用 -SdkPath 指定；解析 SDK 时会确认存在 10.x SDK，而不是只有运行时。测试构建输出到 code/.verification，不会清理正在运行的开发目录或工程 bin\\Release。
 
 Windows 安装器构建显式接收已核对的推理运行时目录，以自包含方式发布桌宠、标准版 MCP 桥接程序与独立卸载器，附加动画解码组件、Visual C++运行库与许可文件，再生成安装器及 SHA256文件。本次使用的 payload目录、setup-stub目录、uninstaller目录、中间压缩文件或目标安装器已存在时报告错误，不覆盖这些已有构建产物。Linux 构建按发行类型发布自包含程序，加入推理运行时、RunnerGuard、PortalCapture与许可，生成对应的 .deb 与 SHA256文件。
 
@@ -279,6 +287,7 @@ Windows 安装器构建显式接收已核对的推理运行时目录，以自包
 | 余额-金袋叮当 | Event | 100 | — |
 | 余额-钱袋如常 | Event | 100 | — |
 | 余额-钱袋满溢 | Event | 30 | — |
+| 侧身急躁跑 | Event | 100 | — |
 | 偷吃零食被抓住 | Event | 100 | — |
 | 写代码 | Event | 100 | WorkKind="Coding"；WorkWeight=1000 |
 | 写福字 | Event | 0 | Festival="SpringFestival"；RadiusDays=14；FestivalMode="Triangle"；FestivalWeight=1000 |
@@ -309,6 +318,8 @@ Windows 安装器构建显式接收已核对的推理运行时目录，以自包
 | 吃重阳糕 | Event | 100 | Meal="Any"；MealBoost=400 |
 | 吃长寿面 | Event | 100 | Meal="Any"；MealBoost=400 |
 | 吃青团 | Event | 100 | Meal="Any"；MealBoost=400 |
+| 吃饭·碗饭 | Event | 100 | Meal="Any"；MealBoost=400 |
+| 吃饭团 | Event | 100 | Meal="Any"；MealBoost=400 |
 | 吃饺子 | Event | 100 | Meal="Any"；MealBoost=400 |
 | 吹气球 | Event | 100 | — |
 | 吹笛子 | Event | 100 | — |
@@ -324,6 +335,7 @@ Windows 安装器构建显式接收已核对的推理运行时目录，以自包
 | 工作状态-思考冒泡 | Event | 100 | WorkKind="Working"；WorkWeight=1000 |
 | 工作状态-清点归档 | Event | 100 | WorkKind="Working"；WorkWeight=1000 |
 | 工作状态-雀跃庆祝 | Event | 30 | — |
+| 开心小跑 | Event | 100 | — |
 | 待机呼吸休闲 | Idle | 100 | — |
 | 扑克魔术 | Event | 100 | — |
 | 抽陀螺 | Event | 100 | — |
@@ -340,6 +352,7 @@ Windows 安装器构建显式接收已核对的推理运行时目录，以自包
 | 整体换装试色 | Event | 100 | — |
 | 是啊，吃什么 | Event | 30 | — |
 | 晨间刷牙 | Daily | 100 | — |
+| 期待开饭 | Event | 100 | Meal="Any"；MealBoost=400 |
 | 涮火锅 | Event | 100 | Meal="Any"；MealBoost=400 |
 | 深度思考碎碎念 | Event | 100 | — |
 | 点击回应-傲娇生气 | Click | 20 | — |
@@ -351,6 +364,9 @@ Windows 安装器构建显式接收已核对的推理运行时目录，以自包
 | 玩水枪 | Event | 100 | — |
 | 玩游戏气急败坏 | Event | 100 | — |
 | 用鲸鱼尾巴拍打地面 | Event | 100 | — |
+| 睡觉-开始 | Disabled | 0 | 不自动播放，仅可由 MCP 等外部指定；结束后不自动接循环或起床 |
+| 睡觉-循环 | Disabled | 0 | 不自动播放，仅可由 MCP 等外部指定 |
+| 睡觉-起来 | Disabled | 0 | 不自动播放，仅可由 MCP 等外部指定 |
 | 碎碎念-发呆碎碎念 | Event | 100 | — |
 | 碎碎念-对屏碎碎念 | Event | 500 | — |
 | 碎碎念-擦桌碎碎念 | Event | 100 | — |

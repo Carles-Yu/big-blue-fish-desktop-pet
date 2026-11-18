@@ -13,7 +13,7 @@ MCP 的连接配置、工具字段、动作与文字调度、事件消费及错�
 ./run.ps1 -InputMode Ocr -RuntimeDirectory "推理运行时目录" -ModelsDirectory "GGUF 模型目录"
 ```
 
-默认可复用本机 `C:\Program Files\蓝色大肥鱼` 的运行依赖，也支持 `BLUE_WHALE_RUNTIME`、`BLUE_WHALE_MODELS`、`BLUE_WHALE_DOTNET` 环境变量。运行脚本通过目录连接复用模型，不把模型提交进仓库。SDK 可用 `-SdkPath` 指定。
+默认可复用本机 `C:\Program Files\蓝色大肥鱼` 的运行依赖，也支持 `BLUE_WHALE_RUNTIME`、`BLUE_WHALE_MODELS`、`BLUE_WHALE_DOTNET` 环境变量。运行脚本通过目录连接复用模型，不把模型提交进仓库。构建与运行脚本优先使用 `%LOCALAPPDATA%\BigBlueFish-dev\dotnet` 中的 .NET 10 SDK，也可用 `-SdkPath` 指定。
 
 准备内置 4B 本地模型时，可以运行以下任一种命令。`DestinationDirectory` 是模型准备目录，脚本会在其下创建 `models` 并保存 `model-selection.json`；两个来源的模型有所不同，均适合本应用。
 
@@ -25,11 +25,11 @@ MCP 的连接配置、工具字段、动作与文字调度、事件消费及错�
 
 Hugging Face 为推荐来源，ModelScope 为国内稳定来源。手动安装保留文件的实际名称，检查 GGUF 文件头；SHA-256 不属于两个预设模型时，提示确认后仍可使用。自动化调用可用 `-AllowUnverifiedModel` 明确接受这一提示。OCR 模型准备只下载主模型。
 
-源码启动读取模型目录上一级的 `model-selection.json`，按选择记录复用实际文件名，也能识别两个来源的标准文件名。以上述目录为例，运行 `./run.ps1 -InputMode Ocr -ModelsDirectory "D:\BigBlueFish-local\models" -RuntimeDirectory "推理运行时目录"`。切换目录时，脚本会更新构建目录中的连接，保留原模型目录和设置。
+源码启动读取模型目录上一级的 `model-selection.json`，按选择记录复用实际文件名，也能识别两个来源的标准文件名。以上述目录为例，运行 `./run.ps1 -InputMode Ocr -ModelsDirectory "D:\BigBlueFish-local\models" -RuntimeDirectory "推理运行时目录"`。切换目录时，脚本会更新开发运行目录 `.work/dev-run` 中的连接，保留原模型目录和设置。
 
 无模型启动使用 `./run.ps1 -InputMode Ocr -NoModel`，此时无需模型文件或推理运行时。也可先运行 `../tools/Setup-Model.ps1 -Source None -DestinationDirectory "D:\BigBlueFish-local"` 保存无模型选择，再用对应的 `-ModelsDirectory` 启动。内置模型可以暂不使用，欢迎与告别、动画和鼠标交互照常运行。
 
-OCR 版生成目录为 `BigBlueFish.Windows/bin/x64/Release/net10.0-windows10.0.26100.0/`；视觉版为 `BigBlueFish.Windows/bin/x64/Release/net10.0-windows7.0/`。主程序 `BigBlueFish.exe` 与 `BigBlueFish.dll` 从源码生成。OCR 版依赖在 `packages.lock.json` 中锁定，视觉版使用 `packages.vision.lock.json`。
+OCR 版生成目录为 `BigBlueFish.Windows/bin/x64/Release/net10.0-windows10.0.26100.0/`；视觉版为 `BigBlueFish.Windows/bin/x64/Release/net10.0-windows7.0/`。主程序 `BigBlueFish.exe` 与 `BigBlueFish.dll` 从源码生成。OCR 版依赖在 `packages.lock.json` 中锁定，视觉版使用 `packages.vision.lock.json`。`run.ps1` 会把构建产物同步到仓库根目录 `.work/dev-run` 再启动，并把 `assets` 连接到源码资源目录，避免在工程 `bin\Release` 上直接运行时被 `dotnet clean` 清掉正在使用的素材。
 
 ## 修改入口
 
@@ -63,14 +63,17 @@ python ./tools/import-regions.py "ok_data_level3.csv" "ok_geo.csv"
 
 ## 验证与发布
 
-先退出桌宠，再运行：
+默认的 `test.ps1` 会先跑不依赖退出桌宠的快速检查，再在桌宠退出后执行实窗测试。只需快速检查时运行：
 
 ```powershell
+./test.ps1 -Fast
 ./test.ps1 -InstalledDirectory "C:\Program Files\蓝色大肥鱼" -InputMode Ocr
 ../tools/Build-Installer.ps1 -InputMode Ocr -RuntimeDirectory "已核对的运行时目录"
 ```
 
-默认测试包含 Runner 故障恢复与当前提示词验证、动画权重和日期规则、真实前台窗口捕获、WPF 动画与设置界面验证。实窗测试使用 `.verification/` 的独立设置，复用参考安装目录的模型和运行时。安装器验证项目的 `--lifecycle` 检查普通用户写入权限、Windows 注册、快捷方式和两种数据保留方式的卸载；`--ui-layout <目录>` 检查安装、卸载、模型与更新窗口布局；`--deployment <目录>` 检查模型选择、下载恢复、更新元数据与失败恢复；`--model-ui <目录>` 验证下载失败出口与手动安装确认。
+完整实窗测试前请先退出桌宠。
+
+快速检查（`test.ps1 -Fast`）包含脚本编码、动画规则、记忆、聊天搜索、Codex/Cursor/Gemini 额度、监工协议与界面，以及开发启动目录脚本；测试构建输出放到 `code/.verification`，不会清理正在运行的开发目录或工程 `bin\Release`。完整测试在此基础上再做 Runner 故障恢复与当前提示词验证、真实前台窗口捕获，以及 WPF 动画与设置界面验证。实窗测试使用 `.verification/` 的独立设置，复用参考安装目录的模型和运行时。安装器验证项目的 `--lifecycle` 检查普通用户写入权限、Windows 注册、快捷方式和两种数据保留方式的卸载；`--ui-layout <目录>` 检查安装、卸载、模型与更新窗口布局；`--deployment <目录>` 检查模型选择、下载恢复、更新元数据与失败恢复；`--model-ui <目录>` 验证下载失败出口与手动安装确认。
 
 发布脚本生成 `BigBlueFish-v1.0.1-OCR-Setup.exe` 一键安装器；Vision 构建入口仍保留用于历史维护，不随当前公开 Release 同步发布。安装器携带包含 .NET 运行时的 Windows x64 程序，以及已核对的 llama.cpp `b10809` Vulkan 运行时；模型可从 Hugging Face 或 ModelScope 固定来源下载并校验，也支持手动安装或无模型启动。模型选择记录在安装目录的 model-selection.json。
 
@@ -81,7 +84,7 @@ python ./tools/import-regions.py "ok_data_level3.csv" "ok_geo.csv"
 
 ## Linux 与无MCP版
 
-当前版本为 1.0.1，Windows 和 Linux 都提供标准版与无MCP版。无MCP版使用 `CompanionEdition=Safe` 编译，排除控制服务、工具执行器和对话输入窗口，安装包不分发 MCP 桥接程序及 Control 程序集；`Safe` 是构建和安装包文件名中的版本类型标识。
+当前源码版本为 1.1.0，最近发布的安装包仍为 1.0.1；Windows 和 Linux 都提供标准版与无MCP版。无MCP版使用 `CompanionEdition=Safe` 编译，排除控制服务、工具执行器和对话输入窗口，安装包不分发 MCP 桥接程序及 Control 程序集；`Safe` 是构建和安装包文件名中的版本类型标识。
 
 Windows 安装器运行 `../tools/Build-Installer.ps1 -Edition Standard -RuntimeDirectory "Windows运行时目录"`，将 `Standard` 改为 `Safe` 可生成无MCP版。直接构建 Windows 无MCP版使用 `dotnet build ./BigBlueFish.Windows/BigBlueFish.Windows.csproj -c Release -p:Platform=x64 -p:CompanionEdition=Safe -p:RestoreLockedMode=true`。
 

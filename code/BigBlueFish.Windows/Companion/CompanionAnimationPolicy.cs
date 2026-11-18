@@ -44,7 +44,7 @@ internal sealed class CompanionAnimationPolicy
     {
         var rules = JsonSerializer.Deserialize<List<CompanionAnimationRule>>(File.ReadAllText(Path.Combine(directory, "animations.json")))
             ?? throw new InvalidDataException("动画规则为空");
-        if (rules.Count != 106 || rules.Select(r => r.Id).Distinct().Count() != rules.Count)
+        if (rules.Count != 114 || rules.Select(r => r.Id).Distinct().Count() != rules.Count)
             throw new InvalidDataException("动画规则不完整或有重复");
         foreach (var rule in rules)
             if (Path.GetFileName(rule.File) != rule.File || !File.Exists(Path.Combine(directory, rule.File)))

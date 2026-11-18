@@ -246,7 +246,7 @@ internal static class Program
             using (var client = new Client())
             {
                 var state = client.Data("get_settings"); Check(state.GetProperty("settings").GetProperty("McpEnabled").GetBoolean(), "MCP settings state");
-                Check(client.Data("list_actions").GetArrayLength() == 106, "All 106 actions exposed");
+                Check(client.Data("list_actions").GetArrayLength() == 114, "All 114 actions exposed");
                 if (args.Contains("--settings-focus-only")) { VerifySettingsFocus(client); Field("exitReady", true); pet.Close(); Console.WriteLine($"MCP settings focus: {checks} checks passed."); return 0; }
                 Check(!(bool)Invoke("TryOpenMcpInput")!, "Chat feature is off by default even when MCP is connected");
                 client.Data("update_settings", new { settings = new { McpChatEnabled = true } });

@@ -15,7 +15,7 @@ async def main():
             actual=json.loads(settings.content[0].text)
             assert actual['settings']['McpEnabled']
             actions=await session.call_tool('list_actions',{})
-            assert len(json.loads(actions.content[0].text))==106
+            assert len(json.loads(actions.content[0].text))==114
             text='主人，这是通过独立 MCP SDK 传来的原文呀~'
             said=await session.call_tool('say',{'text':text})
             assert json.loads(said.content[0].text)['text']==text
@@ -24,7 +24,7 @@ async def main():
             denied=await session.call_tool('update_settings',{'settings':{'McpEnabled':False}})
             assert denied.is_error
             await session.send_ping()
-            print('Official Python MCP SDK: initialize, 11 tools, settings, 106 actions, literal speech, PNG image, protected switch and ping passed.')
+            print('Official Python MCP SDK: initialize, 11 tools, settings, 114 actions, literal speech, PNG image, protected switch and ping passed.')
 
 asyncio.run(main())
 

@@ -4,7 +4,7 @@
 
 鱼鱼准备了一百多种可爱的动作表情，平时会在桌面上呼吸、哼歌、伸懒腰、吃零食、玩耍，到了饭点会认真吃饭，到了节日会换上应景的小活动，被点一下、被拎起来时也有专门设计的反应。每次启动，她都会提起裙摆向主人行礼请安；关闭时，也会用同样的礼仪和主人道别。
 
-当前版本为 **1.0.1**，安装包请前往 [GitHub Releases](https://github.com/Bai-Cute/big-blue-fish-desktop-pet/releases/latest) 下载。
+当前源码版本为 **1.1.0**，最近发布的安装包仍为 1.0.1，请前往 [GitHub Releases](https://github.com/Bai-Cute/big-blue-fish-desktop-pet/releases/latest) 下载。
 
 <p align="center">
   <img src="docs/images/bigbluefish-rest-transparent.png" width="38%" alt="蓝色大肥鱼休息状态" />
@@ -43,7 +43,7 @@
 
 ## 一百多种动作表情
 
-鱼鱼内置 106 段透明动画，覆盖待机、点击、拖动、日常事件、用餐、季节和节日等场景。每一种动作都有自己的出现权重，并会结合当前时间、日期、季节、饭点和主人的操作实时计算，这些概率都经过细致严谨的微调，让她的表情丰富有趣，又贴合主人当下的生活节奏。每段动作在没有新的交互打断时都会完整播放，再自然地衔接到下一段。
+鱼鱼内置 114 段透明动画，覆盖待机、点击、拖动、日常事件、用餐、季节和节日等场景。动作会结合当前时间、日期、季节、饭点和主人的操作按权重选择；睡觉的开始、循环和起床三个片段暂不自动选择，可通过 MCP 指定播放。每段动作在没有新的交互打断时都会完整播放，再自然地衔接到下一段。
 
 <p align="center">
   <img src="docs/images/bigbluefish-meal.gif" width="32%" alt="用餐动作" />
@@ -115,7 +115,7 @@ Linux 上的 `command` 为 `/opt/bigbluefish/BigBlueFish.Mcp`。桥接程序会�
 
 - 读取和修改鱼鱼的设置，查看她当前的动作、队列和模型状态；
 - 获取当前前台窗口或整个屏幕的截图；
-- 查询全部 106 个动作，让鱼鱼立即播放某个动作，或者把动作排进队列依次播放；
+- 查询全部 114 个动作，让鱼鱼立即播放某个动作，或者把动作排进队列依次播放；
 - 让鱼鱼立即说出一段指定的话，或者在下一次正常说话时机说出来；
 - 实时接收主人点击、拖动鱼鱼的交互事件。
 
@@ -174,7 +174,7 @@ dotnet build ./code/BigBlueFish.Windows/BigBlueFish.Windows.csproj -c Release -p
 
 本项目以 [Apache License 2.0](LICENSE) 发布。鱼鱼的形象来自对 DeepSeek 的二创虚拟形象“蓝色大肥鱼”；项目使用的动画、模型、运行时、字体和数据分别来自以下项目，各自遵循其原有许可：
 
-- 角色动画：106 段透明 WebM 动画来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，MIT 许可，保留原有颜色、透明度与 24 帧时序，动作的选择与触发逻辑为本项目定制；
+- 角色动画：114 段透明 WebM 动画来自 [PC2005-cloud/dsh-pet](https://github.com/PC2005-cloud/dsh-pet)，保留原有颜色、透明度与 24 帧时序，动作的选择与触发逻辑为本项目定制。上游代码采用 MIT，素材允许开源使用并受角色形象权利约束；上游标明角色形象采用 [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/)，参见第三方声明；
 - 本地模型：Qwen3.5-4B 及其衍生的 heretic 版本与 GGUF 转换，Apache-2.0 许可，模型文件由用户另行下载；
 - 推理与运行环境：llama.cpp（MIT）、.NET 10 运行时（MIT）、Microsoft Visual C++ 运行库（Microsoft 再分发条款）；
 - 动画解码：Windows 版使用 FFmpeg 9.0.1（GPL-3.0-or-later），作为独立进程运行；Linux 版使用系统的 FFmpeg；

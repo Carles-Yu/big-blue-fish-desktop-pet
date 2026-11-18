@@ -144,7 +144,7 @@ internal static class Program
         var rows=items.Select(i=>i.TransformToAncestor(menu).TransformBounds(new Rect(0,0,i.ActualWidth,i.ActualHeight))).ToArray();
         Check(rows.Zip(rows.Skip(1)).All(pair=>pair.First.Bottom<=pair.Second.Top+.1),"menu rows do not overlap");
         var quota=items.Single(i=>i.Header?.ToString()=="额度查询");
-        Check(quota.Items.Cast<MenuItem>().Select(i=>i.Header?.ToString()).SequenceEqual(new[]{"Codex","Cursor"}),"quota submenu lists Codex then Cursor");
+        Check(quota.Items.Cast<MenuItem>().Select(i=>i.Header?.ToString()).SequenceEqual(new[]{"Codex","Cursor","Gemini"}),"quota submenu lists Codex, Cursor, then Gemini");
         quota.IsSubmenuOpen=true;Pump(150);
         var popup=quota.Template.FindName("SubmenuPopup", quota) as System.Windows.Controls.Primitives.Popup;
         var popupChild=popup?.Child as FrameworkElement;
@@ -169,7 +169,7 @@ internal static class Program
         Check(tray.Renderer.GetType().Name=="CompanionTrayMenuRenderer"&&!tray.ShowImageMargin,"tray uses matching palette without obsolete image gutter");
         Check(tray.Items.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>i.Text).SequenceEqual(new[]{"显示桌宠","设置","天气","吐字测试","关闭桌宠","安静一小时","额度查询"}),"tray retains display, settings, weather, speech, close, quiet and quota");
         var trayQuota=(System.Windows.Forms.ToolStripMenuItem)tray.Items[tray.Items.Count-1];
-        Check(trayQuota.DropDownItems.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>i.Text).SequenceEqual(new[]{"Codex","Cursor"}),"tray quota submenu lists Codex then Cursor");
+        Check(trayQuota.DropDownItems.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>i.Text).SequenceEqual(new[]{"Codex","Cursor","Gemini"}),"tray quota submenu lists Codex, Cursor, then Gemini");
         tray.Show(new System.Drawing.Point(500,300));System.Windows.Forms.Application.DoEvents();
         Console.WriteLine($"TRAY_METRICS dpi={tray.DeviceDpi} font={tray.Font.Size}/{tray.Font.Unit} size={tray.Size} client={tray.ClientSize} items="+string.Join(";",tray.Items.Cast<System.Windows.Forms.ToolStripItem>().Select(i=>$"{i.Text}:{i.Bounds},font={i.Font.Size}")));
         Check(tray.GetType().Name=="CompanionTrayMenu"&&tray.Region!=null

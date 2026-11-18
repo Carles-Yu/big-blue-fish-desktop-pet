@@ -1,9 +1,11 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -18,27 +20,45 @@ internal sealed record CursorQuotaReport(bool Success, string Message, CursorQuo
 
 /// <summary>
 /// Reads the local Cursor login only while a quota window is open, then asks cursor.com for usage.
-/// The session value is never written to logs, chat, settings, or the window text.
+/// Official cursor.exe and Agent CLI have no documented non-interactive usage command, so a
+/// cursor-safe-storage:v1 token is unlocked with this Windows user's DPAPI OSCrypt key.
+/// The session value, key, and ciphertext are never written to logs, chat, settings, or the window text.
 /// </summary>
 internal static class CompanionCursorQuota
 {
+    private const string SafeStoragePrefix = "cursor-safe-storage:";
+    private const string SafeStorageV1Prefix = "cursor-safe-storage:v1:";
+    private const string EncryptedUnreadMessage = "Cursor 登录已加密，鱼鱼读不到。请在 Cursor 中保持登录后再查。";
+    private static readonly byte[] DpapiKeyPrefix = "DPAPI"u8.ToArray();
+    private static readonly byte[] ChromiumV10 = "v10"u8.ToArray();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
 
     internal static string DatabasePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
         "Cursor", "User", "globalStorage", "state.vscdb");
 
+    internal static string LocalStatePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+        "Cursor", "Local State");
+
     internal static Task<CursorQuotaReport> Query(CancellationToken cancellation = default) =>
-        Query(null, null, DatabasePath, cancellation);
+        Query(null, null, DatabasePath, LocalStatePath, cancellation);
+
+    internal static Task<CursorQuotaReport> Query(
+        HttpMessageHandler? handler, string? accessToken, string? databasePath, CancellationToken cancellation = default) =>
+        Query(handler, accessToken, databasePath, LocalStatePath, cancellation);
 
     internal static async Task<CursorQuotaReport> Query(
-        HttpMessageHandler? handler, string? accessToken, string? databasePath, CancellationToken cancellation = default)
+        HttpMessageHandler? handler, string? accessToken, string? databasePath, string? localStatePath, CancellationToken cancellation = default)
     {
         var queriedAt = DateTimeOffset.Now;
         string token;
         if (accessToken != null)
-            token = accessToken;
-        else if (!TryReadAccessToken(databasePath ?? DatabasePath, out token, out var readFailure))
+        {
+            if (!TryUnlockAccessToken(accessToken, localStatePath, out token, out var unlockFailure))
+                return Fail(unlockFailure, queriedAt);
+        }
+        else if (!TryReadAccessToken(databasePath ?? DatabasePath, localStatePath ?? LocalStatePath, out token, out var readFailure))
             return Fail(readFailure, queriedAt);
         if (!TrySessionCookie(token, DateTimeOffset.UtcNow, out var cookie, out var cookieFailure))
             return Fail(cookieFailure, queriedAt);
@@ -67,7 +87,10 @@ internal static class CompanionCursorQuota
         }
     }
 
-    internal static bool TryReadAccessToken(string path, out string token, out string failure)
+    internal static bool TryReadAccessToken(string path, out string token, out string failure) =>
+        TryReadAccessToken(path, LocalStatePath, out token, out failure);
+
+    internal static bool TryReadAccessToken(string path, string? localStatePath, out string token, out string failure)
     {
         token = "";
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
@@ -75,6 +98,7 @@ internal static class CompanionCursorQuota
             failure = "未找到本机 Cursor 登录。请先打开 Cursor 并登录。";
             return false;
         }
+        string stored;
         try
         {
             var builder = new SqliteConnectionStringBuilder
@@ -88,29 +112,171 @@ internal static class CompanionCursorQuota
             using var command = connection.CreateCommand();
             command.CommandText = "SELECT value FROM ItemTable WHERE key = $key LIMIT 1;";
             command.Parameters.AddWithValue("$key", "cursorAuth/accessToken");
-            token = command.ExecuteScalar() as string ?? "";
+            stored = command.ExecuteScalar() as string ?? "";
         }
         catch (SqliteException)
         {
             failure = "暂时读不到 Cursor 的登录状态。";
+            token = "";
             return false;
         }
-        if (string.IsNullOrWhiteSpace(token))
+        if (string.IsNullOrWhiteSpace(stored))
         {
             failure = "未找到本机 Cursor 登录。请先打开 Cursor 并登录。";
             return false;
         }
+        return TryUnlockAccessToken(stored, localStatePath, out token, out failure);
+    }
+
+    internal static bool TryUnlockAccessToken(string stored, string? localStatePath, out string token, out string failure, byte[]? encryptionKey = null)
+    {
+        token = "";
         failure = "";
-        return true;
+        if (string.IsNullOrWhiteSpace(stored))
+        {
+            failure = "未找到本机 Cursor 登录。请先打开 Cursor 并登录。";
+            return false;
+        }
+        var value = stored.Trim();
+        if (!value.StartsWith(SafeStoragePrefix, StringComparison.Ordinal))
+        {
+            token = value;
+            return true;
+        }
+        if (!value.StartsWith(SafeStorageV1Prefix, StringComparison.Ordinal))
+        {
+            failure = "Cursor 登录的加密方式已更新，暂时无法读取。请更新蓝色大肥鱼后再查。";
+            return false;
+        }
+        byte[]? loadedKey = null;
+        if (encryptionKey == null)
+        {
+            if (!TryReadOsCryptKey(localStatePath ?? LocalStatePath, out loadedKey, out failure))
+                return false;
+            encryptionKey = loadedKey;
+        }
+        try
+        {
+            var payload = Convert.FromBase64String(value[SafeStorageV1Prefix.Length..].Trim());
+            if (payload.Length < 31 || !payload.AsSpan().StartsWith(ChromiumV10))
+            {
+                failure = EncryptedUnreadMessage;
+                return false;
+            }
+            var nonce = payload.AsSpan(3, 12);
+            var tag = payload.AsSpan(payload.Length - 16, 16);
+            var ciphertext = payload.AsSpan(15, payload.Length - 31);
+            var plain = new byte[ciphertext.Length];
+            using (var gcm = new AesGcm(encryptionKey, 16))
+                gcm.Decrypt(nonce, ciphertext, tag, plain);
+            token = Encoding.UTF8.GetString(plain).Trim();
+            CryptographicOperations.ZeroMemory(plain);
+            if (string.IsNullOrWhiteSpace(token) || token.StartsWith(SafeStoragePrefix, StringComparison.Ordinal))
+            {
+                token = "";
+                failure = EncryptedUnreadMessage;
+                return false;
+            }
+            return true;
+        }
+        catch (Exception error) when (error is FormatException or CryptographicException or ArgumentException or DecoderFallbackException)
+        {
+            failure = EncryptedUnreadMessage;
+            token = "";
+            return false;
+        }
+        finally
+        {
+            if (loadedKey != null)
+                CryptographicOperations.ZeroMemory(loadedKey);
+        }
+    }
+
+    internal static bool TryReadOsCryptKey(string localStatePath, out byte[] key, out string failure)
+    {
+        key = [];
+        failure = EncryptedUnreadMessage;
+        if (string.IsNullOrWhiteSpace(localStatePath) || !File.Exists(localStatePath))
+        {
+            failure = "Cursor 登录已加密，但找不到本机解锁文件。请在 Cursor 中保持登录后再查。";
+            return false;
+        }
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(localStatePath));
+            if (!document.RootElement.TryGetProperty("os_crypt", out var osCrypt)
+                || !osCrypt.TryGetProperty("encrypted_key", out var encrypted)
+                || encrypted.ValueKind != JsonValueKind.String
+                || string.IsNullOrWhiteSpace(encrypted.GetString()))
+            {
+                failure = EncryptedUnreadMessage;
+                return false;
+            }
+            var blob = Convert.FromBase64String(encrypted.GetString()!);
+            if (blob.Length <= DpapiKeyPrefix.Length || !blob.AsSpan().StartsWith(DpapiKeyPrefix))
+            {
+                failure = EncryptedUnreadMessage;
+                return false;
+            }
+            key = UnprotectCurrentUser(blob.AsSpan(DpapiKeyPrefix.Length).ToArray());
+            if (key.Length != 32)
+            {
+                CryptographicOperations.ZeroMemory(key);
+                key = [];
+                failure = EncryptedUnreadMessage;
+                return false;
+            }
+            failure = "";
+            return true;
+        }
+        catch (Exception error) when (error is JsonException or FormatException or CryptographicException or IOException or UnauthorizedAccessException)
+        {
+            failure = "Cursor 登录已加密，鱼鱼无法在当前 Windows 账户下解锁。请用登录 Cursor 的同一账户运行鱼鱼后再查。";
+            key = [];
+            return false;
+        }
+    }
+
+    internal static string EncryptAccessToken(string token, byte[] key)
+    {
+        var plain = Encoding.UTF8.GetBytes(token);
+        var nonce = RandomNumberGenerator.GetBytes(12);
+        var ciphertext = new byte[plain.Length];
+        var tag = new byte[16];
+        try
+        {
+            using (var gcm = new AesGcm(key, 16))
+                gcm.Encrypt(nonce, plain, ciphertext, tag);
+            var payload = new byte[3 + nonce.Length + ciphertext.Length + tag.Length];
+            ChromiumV10.CopyTo(payload, 0);
+            nonce.CopyTo(payload, 3);
+            ciphertext.CopyTo(payload, 15);
+            tag.CopyTo(payload, 15 + ciphertext.Length);
+            return SafeStorageV1Prefix + Convert.ToBase64String(payload);
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(plain);
+        }
+    }
+
+    internal static void WriteLocalState(string path, byte[] key)
+    {
+        var protectedKey = ProtectCurrentUser(key);
+        var blob = new byte[DpapiKeyPrefix.Length + protectedKey.Length];
+        DpapiKeyPrefix.CopyTo(blob, 0);
+        protectedKey.CopyTo(blob, DpapiKeyPrefix.Length);
+        File.WriteAllText(path, "{\"os_crypt\":{\"encrypted_key\":\"" + Convert.ToBase64String(blob) + "\"}}");
+        CryptographicOperations.ZeroMemory(protectedKey);
     }
 
     internal static bool TrySessionCookie(string accessToken, DateTimeOffset now, out string cookie, out string failure)
     {
         cookie = "";
         var token = accessToken.Trim();
-        if (token.StartsWith("cursor-safe-storage:", StringComparison.Ordinal))
+        if (token.StartsWith(SafeStoragePrefix, StringComparison.Ordinal))
         {
-            failure = "Cursor 登录已加密，鱼鱼读不到。请在 Cursor 中保持登录后再查。";
+            failure = EncryptedUnreadMessage;
             return false;
         }
         var separator = token.LastIndexOf("::", StringComparison.Ordinal);
@@ -255,4 +421,48 @@ internal static class CompanionCursorQuota
 
     private static CursorQuotaReport Fail(string message, DateTimeOffset queriedAt) =>
         new(false, message, [], queriedAt);
+
+    internal static byte[] ProtectCurrentUser(byte[] data) => ProtectOrUnprotect(data, protect: true);
+    internal static byte[] UnprotectCurrentUser(byte[] data) => ProtectOrUnprotect(data, protect: false);
+
+    private static byte[] ProtectOrUnprotect(byte[] data, bool protect)
+    {
+        var pin = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
+        {
+            var input = new DataBlob { Size = (uint)data.Length, Data = pin.AddrOfPinnedObject() };
+            var output = new DataBlob();
+            var ok = protect
+                ? CryptProtectData(ref input, null, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, ref output)
+                : CryptUnprotectData(ref input, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, ref output);
+            if (!ok) throw new CryptographicException(Marshal.GetLastWin32Error());
+            try
+            {
+                var result = new byte[output.Size];
+                Marshal.Copy(output.Data, result, 0, (int)output.Size);
+                return result;
+            }
+            finally
+            {
+                if (output.Data != IntPtr.Zero) LocalFree(output.Data);
+            }
+        }
+        finally { pin.Free(); }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DataBlob
+    {
+        public uint Size;
+        public IntPtr Data;
+    }
+
+    [DllImport("crypt32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CryptProtectData(ref DataBlob dataIn, string? description, IntPtr optionalEntropy, IntPtr reserved, IntPtr prompt, int flags, ref DataBlob dataOut);
+
+    [DllImport("crypt32.dll", SetLastError = true)]
+    private static extern bool CryptUnprotectData(ref DataBlob dataIn, IntPtr description, IntPtr optionalEntropy, IntPtr reserved, IntPtr prompt, int flags, ref DataBlob dataOut);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr handle);
 }

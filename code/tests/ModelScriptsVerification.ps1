@@ -18,7 +18,7 @@ function Fixture([string]$Path){
     finally {$writer.Dispose()}
 }
 $sources=Get-ModelSources
-$production=Get-Content -LiteralPath "$root/deployment/ModelStore.cs" -Raw
+$production=Get-Content -LiteralPath "$root/deployment/ModelStore.cs" -Raw -Encoding utf8
 foreach($source in $sources){
     foreach($field in @('Id','Label','FileName','Url','Page','Sha256')){
         Assert ($production.Contains('"'+$source.$field+'"')) "Production source differs: $field"
@@ -95,7 +95,9 @@ Expect-Failure { & "$root/tools/Setup-Model.ps1" -DestinationDirectory $failedDe
 Assert ((Read-ModelSelection $failedDest).Source -eq 'none') 'Hash failure altered selection'
 # Exercise the actual launcher in an isolated source tree; build, process inventory and launch are substituted.
 $launcher=Join-Path $area 'launcher'
-[IO.Directory]::CreateDirectory((Join-Path $launcher 'code')) | Out-Null
+$sourceAssets=Join-Path $launcher 'code/BigBlueFish.Windows/assets'
+[IO.Directory]::CreateDirectory((Join-Path $sourceAssets 'fish')) | Out-Null
+[IO.File]::WriteAllText((Join-Path $sourceAssets 'fish/source.webm'),'source-fixture')
 [IO.Directory]::CreateDirectory((Join-Path $launcher 'tools')) | Out-Null
 Copy-Item -LiteralPath "$root/code/run.ps1" -Destination (Join-Path $launcher 'code/run.ps1')
 Copy-Item -LiteralPath "$root/tools/Model-Helpers.ps1" -Destination (Join-Path $launcher 'tools/Model-Helpers.ps1')
@@ -103,7 +105,11 @@ Set-Content -LiteralPath (Join-Path $launcher 'code/build.ps1') -Value @'
 param($SdkPath,[switch]$Locked,$InputMode)
 $global:BigBlueFishModelScriptTransport.Builds++
 $out=Join-Path $PSScriptRoot 'BigBlueFish.Windows/bin/x64/Release/net10.0-windows10.0.26100.0'
-[IO.Directory]::CreateDirectory($out) | Out-Null
+[IO.Directory]::CreateDirectory((Join-Path $out 'assets/fish')) | Out-Null
+[IO.Directory]::CreateDirectory((Join-Path $out 'media')) | Out-Null
+[IO.File]::WriteAllText((Join-Path $out 'BigBlueFish.exe'),'exe-fixture')
+[IO.File]::WriteAllText((Join-Path $out 'media/ffmpeg.exe'),'ffmpeg-fixture')
+[IO.File]::WriteAllText((Join-Path $out 'assets/fish/build-copy.webm'),'should-not-copy')
 '@ -Encoding utf8
 $global:BigBlueFishModelScriptTransport.Builds=0
 $global:BigBlueFishModelScriptTransport.Launched=$null
@@ -111,18 +117,24 @@ $global:BigBlueFishModelScriptTransport.Running=$false
 function Get-CimInstance { if($global:BigBlueFishModelScriptTransport.Running){[pscustomobject]@{ProcessId=123}} }
 function Start-Process($FilePath,$WorkingDirectory,$WindowStyle){$global:BigBlueFishModelScriptTransport.Launched=$WorkingDirectory}
 $run=Join-Path $launcher 'code/run.ps1'
-$out=Join-Path $launcher 'code/BigBlueFish.Windows/bin/x64/Release/net10.0-windows10.0.26100.0'
+$devRun=Join-Path $launcher '.work/dev-run'
 & $run -NoModel -ModelsDirectory (Join-Path $area 'absent/models') -RuntimeDirectory (Join-Path $area 'absent/runtime')
-Assert ((Read-ModelSelection $out).Source -eq 'none') 'Launcher failed NoModel'
-Assert ($global:BigBlueFishModelScriptTransport.Launched -eq $out) 'Launcher used wrong directory'
+Assert ((Read-ModelSelection $devRun).Source -eq 'none') 'Launcher failed NoModel'
+Assert ($global:BigBlueFishModelScriptTransport.Launched -eq $devRun) 'Launcher used wrong directory'
+Assert (Test-Path -LiteralPath (Join-Path $devRun 'BigBlueFish.exe')) 'Launcher did not sync executable'
+Assert (Test-Path -LiteralPath (Join-Path $devRun 'media/ffmpeg.exe')) 'Launcher did not sync media directory'
+$assetsItem=Get-Item -LiteralPath (Join-Path $devRun 'assets') -Force
+Assert ($assetsItem.LinkType -eq 'Junction') 'Dev run assets is not a junction'
+Assert ([IO.Path]::GetFullPath([string]$assetsItem.Target) -ieq (Resolve-Path -LiteralPath $sourceAssets).Path) 'Dev run assets points to wrong target'
+Assert (!(Test-Path -LiteralPath (Join-Path $sourceAssets 'fish/build-copy.webm'))) 'Sync copied build assets over source assets'
 $runtime=Join-Path $area 'runtime'
 [IO.Directory]::CreateDirectory($runtime) | Out-Null
 [IO.File]::WriteAllText((Join-Path $runtime 'llama-server.exe'),'fixture')
 & $run -ModelsDirectory (Join-Path $area 'modelscope/models') -RuntimeDirectory $runtime
-Assert ((Read-ModelSelection $out).FileName -eq $sources[1].FileName) 'Launcher rejected domestic filename'
+Assert ((Read-ModelSelection $devRun).FileName -eq $sources[1].FileName) 'Launcher rejected domestic filename'
 Save-ModelSelection $dest ([ordered]@{Source='manual';FileName='自选模型.gguf';Sha256=$null})
 & $run -ModelsDirectory (Join-Path $dest 'models') -RuntimeDirectory $runtime
-Assert ((Read-ModelSelection $out).FileName -eq '自选模型.gguf') 'Launcher rejected actual manual name'
+Assert ((Read-ModelSelection $devRun).FileName -eq '自选模型.gguf') 'Launcher rejected actual manual name'
 Assert (Test-Path $manual) 'Launcher modified source model'
 Assert ((Read-ModelSelection $dest).Source -eq 'manual') 'Launcher rewrote source selection'
 $global:BigBlueFishModelScriptTransport.Running=$true

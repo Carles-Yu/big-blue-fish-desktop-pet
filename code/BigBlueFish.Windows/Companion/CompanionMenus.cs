@@ -56,8 +56,12 @@ public partial class MainWindow
         var cursorQuota = new MenuItem { Header = "Cursor", Icon = CompanionBrandIcons.Create(CompanionBrand.Cursor) };
         System.Windows.Automation.AutomationProperties.SetAutomationId(cursorQuota, "cursor-quota-menu");
         cursorQuota.Click += (_, _) => OpenCursorQuota();
+        var geminiQuota = new MenuItem { Header = "Gemini", Icon = CompanionBrandIcons.Create(CompanionBrand.Gemini) };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(geminiQuota, "gemini-quota-menu");
+        geminiQuota.Click += (_, _) => OpenGeminiQuota();
         quota.Items.Add(codexQuota);
         quota.Items.Add(cursorQuota);
+        quota.Items.Add(geminiQuota);
         companionContextMenu.Items.Add(quota);
         companionContextMenu.Opened += (_, _) => quiet.Header = quietHours.MenuLabel;
         companionContextMenu.Opened += (_, _) => { weather.IsEnabled = !PuppetActive; test.IsEnabled = !PuppetActive; };

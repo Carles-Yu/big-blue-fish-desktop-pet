@@ -8,7 +8,7 @@ using System.Xml.Linq;
 
 namespace BigBlueFish.Windows;
 
-internal enum CompanionBrand { Codex, Cursor }
+internal enum CompanionBrand { Codex, Cursor, Gemini }
 
 internal static class CompanionBrandIcons
 {
@@ -30,6 +30,8 @@ internal static class CompanionBrandIcons
                 drawing.Children.Add(new GeometryDrawing(new SolidColorBrush(Color.FromRgb(38, 37, 30)), null, Geometry.Parse(path.Attribute("d")!.Value)));
             source = new DrawingImage(drawing);
         }
+        else if (brand == CompanionBrand.Gemini)
+            source = new BitmapImage(new Uri("pack://application:,,,/BigBlueFish;component/assets/brands/gemini.png"));
         else
             source = new BitmapImage(new Uri("pack://application:,,,/BigBlueFish;component/assets/brands/codex.png"));
         source.Freeze(); sources.Add(brand, source); return source;

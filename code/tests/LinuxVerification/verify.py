@@ -68,7 +68,7 @@ try:
     version=ET.parse(pathlib.Path(__file__).resolve().parents[3]/'Version.props').findtext('.//Version')
     check(init['serverInfo']['version']==version,'real stdio bridge negotiates current version')
     check(len(request('tools/list')['tools'])==9,'all MCP tools available')
-    check(len(content('list_actions'))==106,'same 106 production actions')
+    check(len(content('list_actions'))==114,'same 114 production actions')
     text='主人，Linux 端收到的原文呀~ ABC 123'
     content('say',text=text); wait(lambda: state()['text']==text)
     check(state()['modelPid'] is None and state()['bubbleVisible'],'literal speech works without local model')

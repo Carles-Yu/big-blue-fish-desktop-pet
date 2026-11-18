@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BigBlueFish.Windows;
@@ -26,6 +27,21 @@ internal static class CursorQuotaVerification
         Check(!CompanionCursorQuota.TrySessionCookie("cursor-safe-storage:v1:abc", DateTimeOffset.UnixEpoch, out _, out var encrypted) && encrypted.Contains("加密", StringComparison.Ordinal), "encrypted login is refused");
         Check(!CompanionCursorQuota.TrySessionCookie("not-a-token", DateTimeOffset.UnixEpoch, out _, out _), "a non-token login is refused");
 
+        var unlockKey = RandomNumberGenerator.GetBytes(32);
+        try
+        {
+            Check(!CompanionCursorQuota.TryUnlockAccessToken("cursor-safe-storage:v1:abc", null, out _, out var junk, unlockKey) && junk.Contains("加密", StringComparison.Ordinal) && !junk.Contains("abc", StringComparison.Ordinal), "a junk encrypted payload cannot be unlocked");
+            Check(!CompanionCursorQuota.TryUnlockAccessToken("cursor-safe-storage:v2:abc", null, out _, out var upgraded) && upgraded.Contains("加密方式已更新", StringComparison.Ordinal), "an unknown encrypted version is refused");
+            var locked = CompanionCursorQuota.EncryptAccessToken(jwt, unlockKey);
+            Check(locked.StartsWith("cursor-safe-storage:v1:", StringComparison.Ordinal), "a test token is stored in the v1 envelope");
+            Check(CompanionCursorQuota.TryUnlockAccessToken(locked, null, out var unlocked, out _, unlockKey) && unlocked == jwt, "a v1 token unlocks with the known key");
+            Check(!string.IsNullOrEmpty(unlocked) && !unlocked.StartsWith("cursor-safe-storage:", StringComparison.Ordinal), "the unlocked value is not the envelope");
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(unlockKey);
+        }
+
         var database = Path.Combine(Path.GetTempPath(), "cursor-quota-" + Guid.NewGuid().ToString("N") + ".db");
         try
         {
@@ -41,6 +57,35 @@ internal static class CursorQuotaVerification
             Check(!CompanionCursorQuota.TryReadAccessToken(database + ".missing", out _, out var missing) && missing.Contains("未找到", StringComparison.Ordinal), "missing database explains that Cursor is not logged in");
         }
         finally { try { File.Delete(database); } catch (IOException) { } }
+
+        if (OperatingSystem.IsWindows())
+        {
+            var key = RandomNumberGenerator.GetBytes(32);
+            var encryptedDatabase = Path.Combine(Path.GetTempPath(), "cursor-quota-enc-" + Guid.NewGuid().ToString("N") + ".db");
+            var localState = Path.Combine(Path.GetTempPath(), "cursor-local-state-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var locked = CompanionCursorQuota.EncryptAccessToken(jwt, key);
+                CompanionCursorQuota.WriteLocalState(localState, key);
+                using (var connection = new SqliteConnection("Data Source=" + encryptedDatabase))
+                {
+                    connection.Open();
+                    using var command = connection.CreateCommand();
+                    command.CommandText = "CREATE TABLE ItemTable (key TEXT, value TEXT); INSERT INTO ItemTable (key, value) VALUES ('cursorAuth/accessToken', $token);";
+                    command.Parameters.AddWithValue("$token", locked);
+                    command.ExecuteNonQuery();
+                }
+                Check(CompanionCursorQuota.TryReadAccessToken(encryptedDatabase, localState, out var unlocked, out _) && unlocked == jwt, "an encrypted login unlocks from a temporary Local State");
+                Check(!File.ReadAllText(localState).Contains(jwt, StringComparison.Ordinal), "Local State does not contain the plaintext token");
+                Check(!CompanionCursorQuota.TryReadAccessToken(encryptedDatabase, localState + ".missing", out _, out var missingKey) && missingKey.Contains("解锁文件", StringComparison.Ordinal) && !missingKey.Contains(jwt, StringComparison.Ordinal) && !missingKey.Contains("cursor-safe-storage:", StringComparison.Ordinal), "a missing Local State is explained without the token");
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
+                try { File.Delete(encryptedDatabase); } catch (IOException) { }
+                try { File.Delete(localState); } catch (IOException) { }
+            }
+        }
 
         var summary = """
             {"billingCycleEnd":"2026-11-02T14:11:55.000Z","membershipType":"pro","isUnlimited":false,"individualUsage":{"plan":{"enabled":true,"used":125,"limit":1000,"totalPercentUsed":12.5,"autoPercentUsed":3,"apiPercentUsed":40},"onDemand":{"enabled":true,"used":2309,"limit":null}}}
@@ -63,6 +108,26 @@ internal static class CursorQuotaVerification
         Check(transport.SawCookie && transport.SawOrigin && !queried.Message.Contains(jwt, StringComparison.Ordinal), "query sends the session without putting it in the result");
         var denied = await CompanionCursorQuota.Query(new Probe("{}", null, HttpStatusCode.Unauthorized), jwt, null, CancellationToken.None);
         Check(!denied.Success && denied.Message.Contains("失效", StringComparison.Ordinal) && !denied.Message.Contains(jwt, StringComparison.Ordinal), "a rejected login stays out of the message");
+
+        if (OperatingSystem.IsWindows())
+        {
+            var key = RandomNumberGenerator.GetBytes(32);
+            var localState = Path.Combine(Path.GetTempPath(), "cursor-local-state-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var locked = CompanionCursorQuota.EncryptAccessToken(jwt, key);
+                CompanionCursorQuota.WriteLocalState(localState, key);
+                var unlockedQuery = new Probe(summary, sand, HttpStatusCode.OK);
+                var unlockedReport = await CompanionCursorQuota.Query(unlockedQuery, locked, null, localState, CancellationToken.None);
+                Check(unlockedReport.Success && Line(unlockedReport, "Auto")?.RemainingPercent == 97 && unlockedQuery.SawCookie, "query unlocks a v1 token before calling usage-summary");
+                Check(!unlockedReport.Message.Contains(jwt, StringComparison.Ordinal) && !unlockedReport.Message.Contains("cursor-safe-storage:", StringComparison.Ordinal), "an unlocked query result does not contain the token");
+            }
+            finally
+            {
+                CryptographicOperations.ZeroMemory(key);
+                try { File.Delete(localState); } catch (IOException) { }
+            }
+        }
 
         if (live)
         {

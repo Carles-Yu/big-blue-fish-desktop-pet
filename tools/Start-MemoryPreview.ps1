@@ -1,4 +1,4 @@
-param()
+﻿param()
 $ErrorActionPreference = 'Stop'
 $preview = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../.work/memory-preview-windows'))
 $memory = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../.work/memory-preview-user'))

@@ -18,6 +18,8 @@ public partial class MainWindow
     private bool movementMirrored;
     private bool exitAnimation, exitReady;
     private bool greetingNoticeActive;
+    private const string BaseIdleActionId = "待机呼吸休闲";
+    private int consecutiveAnimationFailures;
     private static string WelcomeText(DateTime now)
     {
         string period = now.Hour switch { >= 5 and < 11 => "早上", >= 11 and < 14 => "中午", >= 14 and < 18 => "下午", _ => "晚上" };
@@ -50,18 +52,40 @@ public partial class MainWindow
             Stretch = Stretch.Fill };
         companionLayout.Children.Insert(0, videoImage);
         videoPlayer = new(videoImage);
-        videoPlayer.Failed += error =>
+        videoPlayer.Failed += HandleVideoFailure;
+        videoPlayer.FramePresented += seconds =>
         {
-            File.WriteAllText("companion-errors.log", "动画播放失败：" + error);
-            if (exitAnimation) { exitReady = true; base.Close(); return; }
-            companionReady = false;
-            ShowCompanionNotice("动画未能播放，请检查动画组件是否完整。");
+            consecutiveAnimationFailures = 0;
+            MoveWithAnimation(seconds);
         };
-        videoPlayer.FramePresented += MoveWithAnimation;
         companionReady = true;
         if (PuppetActive) PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle");
         else { PlayAnimation(animationPolicy.Find("女仆屈膝礼仪"), "Startup"); ShowGreetingNotice(WelcomeText(DateTime.Now)); }
         File.WriteAllText("ready.status", "ready");
+    }
+    private void HandleVideoFailure(string error)
+    {
+        var failedAction = currentAction;
+        try
+        {
+            File.AppendAllText("companion-errors.log",
+                DateTime.Now.ToString("s") + $" [{failedAction}] 动画播放失败：{error}{Environment.NewLine}");
+        }
+        catch { }
+        if (companionClosed) return;
+        if (exitAnimation) { exitReady = true; base.Close(); return; }
+        consecutiveAnimationFailures++;
+        var decoderExists = File.Exists(Path.Combine(AppContext.BaseDirectory, "media", "ffmpeg.exe"));
+        var baseIdlePath = Path.Combine(AnimationDirectory, "待机呼吸休闲.webm");
+        if (decoderExists && File.Exists(baseIdlePath) && failedAction != BaseIdleActionId && consecutiveAnimationFailures < 2)
+        {
+            CancelMovement();
+            ClampCompanion();
+            PlayAnimation(animationPolicy.Find(BaseIdleActionId), PuppetActive ? "PuppetIdle" : "Idle");
+            return;
+        }
+        companionReady = false;
+        ShowCompanionNotice("动画未能播放，请检查动画组件是否完整。");
     }
     private CompanionAnimationContext AnimationContext() => new(DateTime.Now,
         WorkRecognitionEnabled: false, BreakfastHour: preferences.BreakfastHour,
@@ -80,6 +104,7 @@ public partial class MainWindow
     private void AnimationFinished()
     {
         if (companionClosed) return;
+        consecutiveAnimationFailures = 0;
         if (exitAnimation) { exitReady = true; base.Close(); return; }
         if (!dragging && !hiddenByUser && !fullscreenHidden && PlayQueuedMcpAction()) return;
         if (PuppetActive) { PlayAnimation(animationPolicy.Find("待机呼吸休闲"), "PuppetIdle"); return; }

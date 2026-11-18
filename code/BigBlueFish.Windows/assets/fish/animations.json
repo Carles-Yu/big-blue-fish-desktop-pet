@@ -732,5 +732,59 @@
     "File": "悠闲哼歌.webm",
     "Pool": "Idle",
     "Weight": 20
+  },
+  {
+    "Id": "侧身急躁跑",
+    "File": "侧身急躁跑.webm",
+    "Pool": "Event",
+    "Weight": 100
+  },
+  {
+    "Id": "开心小跑",
+    "File": "开心小跑.webm",
+    "Pool": "Event",
+    "Weight": 100
+  },
+  {
+    "Id": "吃饭·碗饭",
+    "File": "吃饭·碗饭.webm",
+    "Pool": "Event",
+    "Weight": 100,
+    "Meal": "Any",
+    "MealBoost": 400
+  },
+  {
+    "Id": "吃饭团",
+    "File": "吃饭团.webm",
+    "Pool": "Event",
+    "Weight": 100,
+    "Meal": "Any",
+    "MealBoost": 400
+  },
+  {
+    "Id": "期待开饭",
+    "File": "期待开饭.webm",
+    "Pool": "Event",
+    "Weight": 100,
+    "Meal": "Any",
+    "MealBoost": 400
+  },
+  {
+    "Id": "睡觉-开始",
+    "File": "睡觉-开始.webm",
+    "Pool": "Disabled",
+    "Weight": 0
+  },
+  {
+    "Id": "睡觉-循环",
+    "File": "睡觉-循环.webm",
+    "Pool": "Disabled",
+    "Weight": 0
+  },
+  {
+    "Id": "睡觉-起来",
+    "File": "睡觉-起来.webm",
+    "Pool": "Disabled",
+    "Weight": 0
   }
 ]

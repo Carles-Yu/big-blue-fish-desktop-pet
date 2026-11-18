@@ -2,6 +2,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Globalization;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Controls;
@@ -46,7 +47,7 @@ internal sealed class CompanionVideoPlayer : IDisposable
         var token = cancellation.Token;
         var id = ++generation;
         var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "media", "ffmpeg.exe"))
-        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardErrorEncoding = Encoding.UTF8 };
         foreach (var arg in new[] { "-v", "error", "-nostdin", "-threads", "1", "-c:v", "libvpx-vp9" }) start.ArgumentList.Add(arg);
         if (startSeconds > 0) { start.ArgumentList.Add("-ss"); start.ArgumentList.Add(startSeconds.ToString("R", CultureInfo.InvariantCulture)); }
         start.ArgumentList.Add("-i"); start.ArgumentList.Add(file);

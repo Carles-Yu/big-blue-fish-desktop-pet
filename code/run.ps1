@@ -6,7 +6,10 @@ if(Get-CimInstance Win32_Process -Filter "Name='BigBlueFish.exe' OR Name='VPet-S
 }
 & "$PSScriptRoot/build.ps1" -SdkPath $SdkPath -Locked -InputMode $InputMode
 $tfm=if($InputMode -eq 'Ocr'){'net10.0-windows10.0.26100.0'}else{'net10.0-windows7.0'}
-$directory=Join-Path $PSScriptRoot "BigBlueFish.Windows/bin/x64/Release/$tfm"
+$buildOutput=Join-Path $PSScriptRoot "BigBlueFish.Windows/bin/x64/Release/$tfm"
+$projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$directory=Join-Path $projectRoot '.work/dev-run'
+Sync-DevelopmentRunDirectory $buildOutput $directory (Join-Path $PSScriptRoot 'BigBlueFish.Windows/assets')
 if(!$RuntimeDirectory){$RuntimeDirectory=$env:BLUE_WHALE_RUNTIME}
 if(!$ModelsDirectory){$ModelsDirectory=$env:BLUE_WHALE_MODELS}
 if(!$RuntimeDirectory){$RuntimeDirectory='C:\Program Files\蓝色大肥鱼\runtime'}

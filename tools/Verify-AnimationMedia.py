@@ -13,5 +13,5 @@ def verify(path):
     return path.name
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
     checked=list(pool.map(verify, sorted(directory.glob('*.webm'))))
-if len(checked)!=106: raise ValueError(f'{len(checked)} videos, expected 106')
-print('106 videos decoded at 640x360 with transparent and opaque pixels; bundled decoder has no external runtime dependency.')
+if len(checked)!=114: raise ValueError(f'{len(checked)} videos, expected 114')
+print('114 videos decoded at 640x360 with transparent and opaque pixels; bundled decoder has no external runtime dependency.')

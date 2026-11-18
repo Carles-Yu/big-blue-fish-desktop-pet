@@ -33,6 +33,8 @@ internal static class Program
 
     static async Task<int> Main(string[] args)
     {
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("BIGBLUEFISH_GEMINI_QUOTA_FIXTURE")))
+            return GeminiQuotaVerification.Fixture(args);
         if (args.Length > 0 && args[0] == "--chat-search") return await ChatSearchVerification.Run();
         if (args.Length > 0 && args[0] == "app-server") return await CodexQuotaVerification.Fixture();
         if (args.Length > 0 && args[0] == "--fake-runner") return await FakeRunner(int.Parse(args[1]), args[2], args.Length < 4 || args[3] == "gpu");
@@ -41,6 +43,7 @@ internal static class Program
             if (args[0] == "--release-foundation") return await ReleaseFoundationVerification.Run(args[1]);
             if (args[0] == "--codex-quota") return await CodexQuotaVerification.Run(args[1], args.Contains("--live"));
             if (args[0] == "--cursor-quota") return await CursorQuotaVerification.Run(args.Contains("--live"));
+            if (args[0] == "--gemini-quota") return await GeminiQuotaVerification.Run(args.Contains("--live"));
             if (args[0] == "--agent-ui") return AgentUiVerification.Run(args[1]);
             if (args[0] == "--memory-ui") return MemoryUiVerification.Run(args[1]);
             if (args[0] == "--balance") return BalanceQueryCheck();

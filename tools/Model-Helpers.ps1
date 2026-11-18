@@ -72,3 +72,33 @@ function Set-DevelopmentJunction([string]$Path,[string]$Target) {
     }
     New-Item -ItemType Junction -Path $Path -Target $resolved | Out-Null
 }
+
+function Copy-DevelopmentDirectoryContents([string]$Source,[string]$Destination) {
+    [IO.Directory]::CreateDirectory($Destination) | Out-Null
+    foreach($item in Get-ChildItem -LiteralPath $Source -Force){
+        $target=Join-Path $Destination $item.Name
+        if($item.PSIsContainer){
+            Copy-DevelopmentDirectoryContents $item.FullName $target
+        } else {
+            Copy-Item -LiteralPath $item.FullName -Destination $target -Force
+        }
+    }
+}
+
+function Sync-DevelopmentRunDirectory([string]$SourceDirectory,[string]$TargetDirectory,[string]$AssetsDirectory) {
+    if(!(Test-Path -LiteralPath $SourceDirectory)){throw "构建输出目录不存在：$SourceDirectory"}
+    [IO.Directory]::CreateDirectory($TargetDirectory) | Out-Null
+    Set-DevelopmentJunction (Join-Path $TargetDirectory 'assets') $AssetsDirectory
+    $excludedDirectories=@('assets','runtime','models','cache')
+    $excludedFiles=@('companion.lock','companion-errors.log','ready.status','cloud.json','test-status.json','test-command.txt','test-render.png','test-settings.png','ocr-status.json','model-request.json','vision-status.json','vision-input.jpg')
+    foreach($entry in Get-ChildItem -LiteralPath $SourceDirectory -Force){
+        if($entry.PSIsContainer){
+            if($excludedDirectories -contains $entry.Name){continue}
+            Copy-DevelopmentDirectoryContents $entry.FullName (Join-Path $TargetDirectory $entry.Name)
+        } else {
+            if($excludedFiles -contains $entry.Name){continue}
+            if($entry.Name -like 'preferences.json*' -or $entry.Name -like 'model-selection.json*' -or $entry.Name -like 'news-last-day.txt*' -or $entry.Name -like '*.db*' -or $entry.Name -like '*.sqlite*'){continue}
+            Copy-Item -LiteralPath $entry.FullName -Destination (Join-Path $TargetDirectory $entry.Name) -Force
+        }
+    }
+}

@@ -752,8 +752,10 @@ public partial class MainWindow
         var quotaItem = new System.Windows.Forms.ToolStripMenuItem("额度查询") { Tag = "\uE9D9" };
         var codexQuotaItem = new System.Windows.Forms.ToolStripMenuItem("Codex", null, (_, _) => Dispatcher.Invoke(OpenCodexQuota)) { Tag = CompanionBrand.Codex };
         var cursorQuotaItem = new System.Windows.Forms.ToolStripMenuItem("Cursor", null, (_, _) => Dispatcher.Invoke(OpenCursorQuota)) { Tag = CompanionBrand.Cursor };
+        var geminiQuotaItem = new System.Windows.Forms.ToolStripMenuItem("Gemini", null, (_, _) => Dispatcher.Invoke(OpenGeminiQuota)) { Tag = CompanionBrand.Gemini };
         quotaItem.DropDownItems.Add(codexQuotaItem);
         quotaItem.DropDownItems.Add(cursorQuotaItem);
+        quotaItem.DropDownItems.Add(geminiQuotaItem);
         menu.Items.Add(quotaItem);
         menu.PrepareQuotaMenu(quotaItem);
         menu.Opening += (_, _) => quietItem.Text = quietHours.MenuLabel;
@@ -793,6 +795,7 @@ public partial class MainWindow
         fishChatWindow?.Close();
         codexQuotaWindow?.Close();
         cursorQuotaWindow?.Close();
+        geminiQuotaWindow?.Close();
         CloseAgentQuestion();
     }
 
@@ -834,6 +837,7 @@ public partial class MainWindow
         fishChatWindow?.Close();
         codexQuotaWindow?.Close();
         cursorQuotaWindow?.Close();
+        geminiQuotaWindow?.Close();
         CloseAgentQuestion();
         SystemEvents.PowerModeChanged -= CompanionPowerChanged;
         SystemEvents.DisplaySettingsChanged -= CompanionDisplayChanged;

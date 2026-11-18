@@ -7,15 +7,19 @@ void Check(bool condition, string message) { if (!condition) throw new Exception
 void Weight(string name, DateTime time, double expected, CompanionAnimationContext? context = null)
     => Check(Math.Abs(policy.Weight(policy.Find(name), context ?? new(time)) - expected) < .00001, $"{name} at {time}: expected {expected}");
 var daytime = new DateTime(2026, 10, 7, 15, 30, 0);
-Check(policy.Rules.Count == 106, "106 animations");
+Check(policy.Rules.Count == 114, "114 animations");
 foreach (var rule in policy.Rules)
 {
+    Check(rule.Id.IsNormalized(System.Text.NormalizationForm.FormC), "non-NFC id " + rule.Id);
+    Check(rule.File.IsNormalized(System.Text.NormalizationForm.FormC), "non-NFC file " + rule.File);
     Check(File.Exists(Path.Combine(directory, rule.File)), "missing " + rule.File);
     Check(rule.Pool is "Idle" or "Event" or "Click" or "Greeting" or "Daily" or "Drag" or "Disabled", "pool " + rule.Id);
 }
 Check(policy.Rules.Count(r => r.Pool == "Idle") == 3, "idle coverage");
 Check(policy.Rules.Count(r => r.Pool == "Click") == 5, "click coverage");
-Check(policy.Rules.Count(r => r.Pool == "Disabled") == 4, "disabled coverage");
+Check(policy.Rules.Count(r => r.Pool == "Disabled") == 7, "disabled coverage");
+foreach (var name in new[]{"吃饭·碗饭", "吃饭团", "期待开饭"})
+{ Weight(name, daytime, 100); Weight(name, daytime.Date.AddHours(12), 500); }
 Weight("待机呼吸休闲", daytime, 100); Weight("悠闲哼歌", daytime, 20);
 Weight("原地小憩沉眠", daytime, 0); Weight("原地小憩沉眠", daytime.Date.AddHours(23), 40);
 Weight("原地小憩沉眠", daytime.Date.AddHours(7.99), 40); Weight("原地小憩沉眠", daytime.Date.AddHours(8), 0);

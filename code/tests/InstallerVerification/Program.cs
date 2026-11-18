@@ -173,7 +173,7 @@ internal static class Checks
                 Check(!names.Contains(obsolete), "payload excludes unused upstream component " + obsolete);
             foreach (var required in new[] { "runtime/msvcp140.dll", "runtime/vcruntime140.dll", "runtime/vcruntime140_1.dll", "runtime/visual-cpp-runtime.json", "licenses/Microsoft-Visual-Cpp-Runtime.txt" })
                 Check(names.Contains(required), "payload includes native runtime dependency " + required);
-            Check(names.Count(n => n.StartsWith("assets/fish/") && n.EndsWith(".webm")) == 106, "payload includes all 106 animations");
+            Check(names.Count(n => n.StartsWith("assets/fish/") && n.EndsWith(".webm")) == 114, "payload includes all 114 animations");
             Check(!names.Any(n => n.StartsWith("assets/pet/")), "old PNG animation pack is absent");
             Check(names.Contains("WinRT.Runtime.dll") == !InstallerForm.RequiresVision, "OCR projections match input mode");
             InstallerForm.ExtractApplication(archive, target);
