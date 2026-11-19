@@ -367,8 +367,10 @@ public partial class MainWindow
         });
 #if COMPANION_SAFE
         Action? disposeMcpSettings = null;
+        AddDesktopHookSettings(pages[0]);
 #else
         Action? disposeMcpSettings = AddMcpSettings(pages[3], w);
+        AddDesktopHookSettings(pages[3]);
 #endif
         AddMemorySettings(pages[^1]);
         foreach (var panel in pages.Take(pages.Length - 1)) Card(panel);

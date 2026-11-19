@@ -45,6 +45,12 @@ try {
     }
     & "$PSScriptRoot/tests/ModelScriptsVerification.ps1"
 
+    $hookOut=(Join-Path $sandbox 'desktop-hooks') + '\'
+    New-Item -ItemType Directory -Force -Path $hookOut | Out-Null
+    Invoke-Checked '桌面钩子验证失败' {
+        & $sdk run --project "$PSScriptRoot/tests/DesktopHookVerification/DesktopHookVerification.csproj" -c Release "-p:OutputPath=$hookOut"
+    }
+
     if($Fast){return}
 
     if(Get-CimInstance Win32_Process -Filter "Name='BigBlueFish.exe' OR Name='VPet-Simulator.Windows.exe'"){throw '请先从托盘菜单退出桌宠，再执行实窗测试。'}

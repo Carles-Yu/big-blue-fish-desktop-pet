@@ -1,0 +1,229 @@
+﻿using BigBlueFish.DesktopHooks;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Security.AccessControl;
+using System.Security.Principal;
+using System.Text;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+
+namespace BigBlueFish.Windows;
+
+public partial class MainWindow
+{
+    private DesktopHookServer? desktopHookServer;
+    private string? desktopHookEndpointPath;
+    private string desktopHookStatus = "未启动";
+    private string cursorHookStatus = "未写入";
+    private string codexHookStatus = "未写入";
+    private string geminiHookStatus = "未写入";
+
+    private void StartDesktopHookListener()
+    {
+        if (!OperatingSystem.IsWindows() || desktopHookServer != null || companionClosed)
+            return;
+        try
+        {
+            var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "BigBlueFish", "desktop-hooks");
+            Directory.CreateDirectory(dir);
+            RestrictToCurrentUser(dir, true);
+
+            var scriptSource = DesktopHookScriptSources().FirstOrDefault(File.Exists);
+            var scriptDest = Path.Combine(dir, DesktopHookConfigInstaller.ScriptFileName);
+            if (scriptSource != null)
+            {
+                File.Copy(scriptSource, scriptDest, true);
+                RestrictToCurrentUser(scriptDest, false);
+            }
+
+            var server = DesktopHookServer.Start(reminder =>
+            {
+                try
+                {
+                    Dispatcher.BeginInvoke(() => ShowDesktopHookReminder(reminder));
+                }
+                catch
+                {
+                }
+            });
+            desktopHookServer = server;
+            desktopHookEndpointPath = Path.Combine(dir, "endpoint.json");
+            WriteRestrictedText(desktopHookEndpointPath, JsonSerializer.Serialize(new
+            {
+                url = server.Url,
+                token = server.Token,
+                pid = Environment.ProcessId
+            }));
+
+            if (scriptSource != null)
+                InstallDesktopHookConfigs(scriptDest);
+            else
+            {
+                cursorHookStatus = "缺少钩子脚本，未改配置。";
+                codexHookStatus = cursorHookStatus;
+                geminiHookStatus = cursorHookStatus;
+            }
+
+            desktopHookStatus = $"已在 127.0.0.1:{server.Port} 监听";
+        }
+        catch
+        {
+            StopDesktopHookListener();
+            desktopHookStatus = "接收口未能启动";
+        }
+    }
+
+    private void StopDesktopHookListener()
+    {
+        try { desktopHookServer?.Dispose(); } catch { }
+        desktopHookServer = null;
+        if (!string.IsNullOrEmpty(desktopHookEndpointPath))
+        {
+            try { File.Delete(desktopHookEndpointPath); } catch { }
+            desktopHookEndpointPath = null;
+        }
+        if (desktopHookStatus != "接收口未能启动")
+            desktopHookStatus = "已停止";
+    }
+
+    private void ShowDesktopHookReminder(DesktopHookReminder reminder)
+    {
+        if (companionClosed || exitAnimation)
+            return;
+        speechRequestVersion++;
+        brain.CancelGeneration();
+        EndModelSpeech();
+        EndGreetingNotice();
+        automaticBubble = false;
+        externalBubble = true;
+        bubbleIsModelReply = false;
+        bubbleUntil = DateTime.MaxValue;
+        speech.Show(reminder.Title + "\n" + reminder.Message, true);
+        agentNotificationClick = RestoreCompanion;
+        notifyIcon?.ShowBalloonTip(
+            10000,
+            reminder.Title.Length > 63 ? reminder.Title[..63] : reminder.Title,
+            reminder.Message.Length > 240 ? reminder.Message[..240] + "…" : reminder.Message,
+            reminder.Outcome == DesktopHookOutcome.Failed ? System.Windows.Forms.ToolTipIcon.Warning : System.Windows.Forms.ToolTipIcon.Info);
+    }
+
+    private void InstallDesktopHookConfigs(string scriptPath)
+    {
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        cursorHookStatus = MergeDesktopHookFile(
+            Path.Combine(profile, ".cursor", "hooks.json"),
+            scriptPath,
+            DesktopHookConfigInstaller.TryMergeCursor);
+        codexHookStatus = MergeDesktopHookFile(
+            Path.Combine(profile, ".codex", "hooks.json"),
+            scriptPath,
+            DesktopHookConfigInstaller.TryMergeCodex);
+        if (codexHookStatus is "已创建。" or "已更新。" or "已写入，无需改动。")
+            codexHookStatus += "需在 Codex 桌面 Settings → Hooks 中批准；尚未收到过事件。若批准后仍无事件，将标记为未接通，不会改用其他办法。";
+        geminiHookStatus = MergeDesktopHookFile(
+            Path.Combine(profile, ".gemini", "config", "hooks.json"),
+            scriptPath,
+            DesktopHookConfigInstaller.TryMergeGemini);
+    }
+
+    private static string MergeDesktopHookFile(
+        string path,
+        string scriptPath,
+        TryMergeDesktopHook merge)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+            var existing = File.Exists(path) ? File.ReadAllText(path) : null;
+            if (!merge(existing, scriptPath, out var updated, out var status))
+                return "hooks.json 无法解析，已保持原文件。";
+            if (status == "unchanged")
+                return "已写入，无需改动。";
+            WriteTextAtomic(path, updated);
+            return status == "created" ? "已创建。" : "已更新。";
+        }
+        catch
+        {
+            return "写入失败。";
+        }
+    }
+
+    private void AddDesktopHookSettings(StackPanel panel)
+    {
+        panel.Children.Add(new TextBlock { Text = "图形界面任务完成提醒", FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 16, 0, 6) });
+        panel.Children.Add(new TextBlock
+        {
+            Text =
+                "大肥鱼只接收本机当前用户、经官方钩子送来的图形界面任务结束事件，不会去看命令行窗口、日志或界面。接收口只绑在 127.0.0.1，令牌仅当前用户可读。命令行来源无法确认是桌面时会丢弃。" +
+                Environment.NewLine + Environment.NewLine +
+                "Cursor 与 Codex 的官方钩子目前没有可确认“来自桌面”的字段，因此这两家的事件会先丢弃，以免和命令行任务混在一起。Gemini / Antigravity 可按官方路径区分桌面与命令行，并且只在完全空闲时提醒。" +
+                Environment.NewLine + Environment.NewLine +
+                "Codex 桌面需要在 Settings → Hooks 中批准后才会触发；若批准后仍没有事件，会标记为未接通，不会改用其他办法。已有的 MCP notify_task 仍可主动通知。" +
+                Environment.NewLine + Environment.NewLine +
+                "接收口：" + desktopHookStatus + Environment.NewLine +
+                "Cursor：" + cursorHookStatus + Environment.NewLine +
+                "Codex：" + codexHookStatus + Environment.NewLine +
+                "Gemini：" + geminiHookStatus,
+            Foreground = Brushes.SlateGray,
+            TextWrapping = TextWrapping.Wrap
+        });
+    }
+
+    private delegate bool TryMergeDesktopHook(string? existingJson, string scriptPath, out string updatedJson, out string status);
+
+
+    private static IEnumerable<string> DesktopHookScriptSources()
+    {
+        yield return Path.Combine(AppContext.BaseDirectory, "hooks", DesktopHookConfigInstaller.ScriptFileName);
+        yield return Path.Combine(AppContext.BaseDirectory, DesktopHookConfigInstaller.ScriptFileName);
+    }
+
+
+    private static void WriteRestrictedText(string path, string text)
+    {
+        WriteTextAtomic(path, text);
+        RestrictToCurrentUser(path, false);
+    }
+
+    private static void WriteTextAtomic(string path, string text)
+    {
+        var temp = path + ".tmp";
+        File.WriteAllText(temp, text, new UTF8Encoding(false));
+        if (File.Exists(path))
+            File.Replace(temp, path, null);
+        else
+            File.Move(temp, path);
+    }
+
+    private static void RestrictToCurrentUser(string path, bool directory)
+    {
+        var user = WindowsIdentity.GetCurrent().User;
+        if (user is null)
+            return;
+        if (directory)
+        {
+            var info = new DirectoryInfo(path);
+            var security = new DirectorySecurity();
+            security.SetAccessRuleProtection(true, false);
+            security.AddAccessRule(new FileSystemAccessRule(
+                user, FileSystemRights.FullControl,
+                InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                PropagationFlags.None, AccessControlType.Allow));
+            info.SetAccessControl(security);
+        }
+        else
+        {
+            var info = new FileInfo(path);
+            var security = new FileSecurity();
+            security.SetAccessRuleProtection(true, false);
+            security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
+            info.SetAccessControl(security);
+        }
+    }
+}

@@ -192,6 +192,7 @@ public partial class MainWindow
         Loaded += async (_, _) =>
         {
             InstallCompanionHook();
+            StartDesktopHookListener();
             await LoadCompanionAnimations();
             if (preferences.CheckUpdatesOnStartup && !App.Args.Contains("--test-mode"))
             {
@@ -838,6 +839,7 @@ public partial class MainWindow
         if (companionClosed)
             return;
         companionClosed = true;
+        StopDesktopHookListener();
         modelInstaller?.RequestClose();
         updateWindow?.RequestClose();
         StopMcp();
