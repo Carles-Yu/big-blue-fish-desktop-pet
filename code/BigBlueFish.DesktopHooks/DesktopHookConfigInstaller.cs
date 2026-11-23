@@ -100,8 +100,15 @@ public static class DesktopHookConfigInstaller
     static bool MergeCodex(JsonObject root, string command)
     {
         var hooks = GetOrCreateObject(root, "hooks");
-        var stop = GetOrCreateArray(hooks, "Stop");
-        foreach (var item in stop)
+        var stopChanged = MergeCodexEvent(hooks, "Stop", command);
+        var interruptChanged = MergeCodexEvent(hooks, "Interrupt", command);
+        return stopChanged || interruptChanged;
+    }
+
+    static bool MergeCodexEvent(JsonObject hooks, string eventName, string command)
+    {
+        var list = GetOrCreateArray(hooks, eventName);
+        foreach (var item in list)
         {
             if (item is not JsonObject group || group["hooks"] is not JsonArray inner)
                 continue;
@@ -111,7 +118,7 @@ public static class DesktopHookConfigInstaller
                 return true;
         }
 
-        stop.Add(new JsonObject
+        list.Add(new JsonObject
         {
             ["hooks"] = new JsonArray { NewCommandObject(command, includeType: true) }
         });

@@ -170,9 +170,9 @@ public partial class MainWindow
         panel.Children.Add(new TextBlock
         {
             Text =
-                "大肥鱼只接收本机当前用户、经官方钩子送来的图形界面任务结束事件，不会去看命令行窗口、日志或界面。接收口只绑在 127.0.0.1，令牌仅当前用户可读。命令行来源无法确认是桌面时会丢弃。" +
+                "大肥鱼只接收本机当前用户、经官方钩子送来的任务结束事件，不会去看命令行窗口、日志或界面。接收口只绑在 127.0.0.1，令牌仅当前用户可读。" +
                 Environment.NewLine + Environment.NewLine +
-                "Cursor 与 Codex 的官方钩子目前没有可确认“来自桌面”的字段，因此这两家的事件会先丢弃，以免和命令行任务混在一起。Gemini / Antigravity 可按官方路径区分桌面与命令行，并且只在完全空闲时提醒。" +
+                "Gemini / Antigravity 可按官方路径区分桌面与命令行，并且只在完全空闲时提醒，命令行任务会丢弃。Cursor 与 Codex 的官方钩子还不能区分桌面和命令行，因此只要官方钩子报任务结束就会提醒，命令行里的任务也可能弹出。" +
                 Environment.NewLine + Environment.NewLine +
                 "Codex 桌面需要在 Settings → Hooks 中批准后才会触发；若批准后仍没有事件，会标记为未接通，不会改用其他办法。已有的 MCP notify_task 仍可主动通知。" +
                 Environment.NewLine + Environment.NewLine +

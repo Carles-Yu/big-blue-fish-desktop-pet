@@ -68,9 +68,11 @@ Check(!wrapped!.Title.Contains('@') && !wrapped.Message.Contains('@'), "Forbidde
 var cursorCompleted = """
 {"status":"completed","conversation_id":"c1","workspace_roots":["F:/github/big-blue-fish-desktop-pet"],"user_email":"hidden@example.com","transcript_path":"C:/Users/Administrator/.cursor/projects/pet/transcript.jsonl","hook_event_name":"stop"}
 """;
-Check(!Parse("cursor", cursorCompleted, out var cursorReminder, out var cursorReason) && cursorReminder is null && cursorReason == "unconfirmed-desktop", "Cursor payloads without an official desktop field are discarded");
-Check(!Parse("cursor", cursorCompleted.Replace("completed", "error"), out _, out var cursorErrorReason) && cursorErrorReason == "unconfirmed-desktop", "Cursor error events are still discarded when the desktop source is unconfirmed");
-Check(!Parse("cursor", cursorCompleted.Replace("completed", "aborted"), out _, out var cursorAbortReason) && cursorAbortReason == "unconfirmed-desktop", "Cursor aborted events are still discarded when the desktop source is unconfirmed");
+Check(Parse("cursor", cursorCompleted, out var cursorReminder, out var cursorReason) && cursorReason == "" && cursorReminder is { Source: DesktopHookSource.Cursor, Outcome: DesktopHookOutcome.Completed, ProjectName: "big-blue-fish-desktop-pet" }, "Cursor completed official hooks are accepted even without a desktop field");
+Check(cursorReminder!.Title == "Cursor · big-blue-fish-desktop-pet 已完成" && cursorReminder.Message == "Cursor 这一轮做完了。" && cursorReminder.AnimationId == "工作状态-雀跃庆祝", "Cursor completed uses the agreed wording and celebration clip");
+Check(!cursorReminder.Title.Contains("hidden", StringComparison.OrdinalIgnoreCase) && !cursorReminder.Message.Contains("hidden", StringComparison.OrdinalIgnoreCase) && !cursorReminder.Title.Contains('@') && !cursorReminder.Message.Contains("transcript", StringComparison.OrdinalIgnoreCase), "Cursor reminder does not include email or transcript paths");
+Check(Parse("cursor", cursorCompleted.Replace("completed", "error"), out var cursorFailed, out _) && cursorFailed is { Outcome: DesktopHookOutcome.Failed, AnimationId: "工作状态-垂头叹气冒汗" } && cursorFailed.Title.EndsWith("未能完成"), "Cursor error is a failure reminder");
+Check(Parse("cursor", cursorCompleted.Replace("completed", "aborted"), out var cursorAborted, out _) && cursorAborted is { Outcome: DesktopHookOutcome.Cancelled, AnimationId: "点击回应-害羞惊讶" } && cursorAborted.Title.EndsWith("已取消"), "Cursor aborted is a cancellation reminder");
 Check(!Parse("cursor", """{"status":"running","user_email":"hidden@example.com"}""", out _, out var cursorStatus) && cursorStatus == "invalid-status", "Cursor payload with an unknown status is discarded first");
 
 var cursorEnv = new Dictionary<string, string?>
@@ -79,17 +81,23 @@ var cursorEnv = new Dictionary<string, string?>
     ["CURSOR_USER_EMAIL"] = "hidden@example.com",
     ["CURSOR_VERSION"] = "2.0.0"
 };
-Check(!Parse("cursor", cursorCompleted, out _, out var cursorEnvReason, cursorEnv) && cursorEnvReason == "unconfirmed-desktop", "Cursor official environment variables are not used as a desktop discriminator");
+Check(Parse("cursor", cursorCompleted, out var cursorWithEnv, out var cursorEnvReason, cursorEnv) && cursorEnvReason == "" && cursorWithEnv is { ProjectName: "big-blue-fish-desktop-pet" }, "Cursor official environment variables are not required to accept the event");
+Check(!cursorWithEnv!.Title.Contains('@') && !cursorWithEnv.Message.Contains("hidden"), "Cursor env values are not copied into the reminder");
 
 var built = DesktopHookParser.Build(DesktopHookSource.Cursor, DesktopHookOutcome.Cancelled, "big-blue-fish-desktop-pet");
-Check(built.Title == "Cursor · big-blue-fish-desktop-pet 已取消" && built.Message == "Cursor 在图形界面里取消了这一轮。", "Cancelled wording is not treated as a failure");
+Check(built.Title == "Cursor · big-blue-fish-desktop-pet 已取消" && built.Message == "Cursor 这一轮取消了。", "Cancelled wording is not treated as a failure");
 Check(built.AnimationId == "点击回应-害羞惊讶", "Cancelled reminder plays the shy-surprise clip");
 Check(!built.Title.Contains('@') && !built.Message.Contains("hidden"), "Built reminders never include an email");
 
 var codexStop = """
 {"session_id":"s1","transcript_path":"C:/Users/Administrator/.codex/sessions/s1.jsonl","cwd":"F:/github/big-blue-fish-desktop-pet","hook_event_name":"Stop","turn_id":"t1","stop_hook_active":true,"last_assistant_message":"secret answer"}
 """;
-Check(!Parse("codex", codexStop, out var codexReminder, out var codexReason) && codexReminder is null && codexReason == "unconfirmed-desktop", "Codex Stop payloads without an official desktop field are discarded");
+Check(Parse("codex", codexStop, out var codexReminder, out var codexReason) && codexReason == "" && codexReminder is { Source: DesktopHookSource.Codex, Outcome: DesktopHookOutcome.Ended, ProjectName: "big-blue-fish-desktop-pet" }, "Codex Stop official hooks are accepted even without a desktop field");
+Check(codexReminder!.Title == "Codex · big-blue-fish-desktop-pet 结束了" && codexReminder.Message == "Codex 这一轮结束了。" && codexReminder.AnimationId == "工作状态-清点归档", "Codex Stop uses 结束了 and the archive clip");
+Check(!codexReminder.Title.Contains("secret", StringComparison.OrdinalIgnoreCase) && !codexReminder.Message.Contains("secret", StringComparison.OrdinalIgnoreCase) && !codexReminder.Message.Contains("transcript", StringComparison.OrdinalIgnoreCase), "Codex reminder does not include assistant text or transcript paths");
+var codexInterrupt = codexStop.Replace("Stop", "Interrupt");
+Check(Parse("codex", codexInterrupt, out var codexInterrupted, out _) && codexInterrupted is { Outcome: DesktopHookOutcome.Interrupted, AnimationId: "点击回应-傲娇生气" } && codexInterrupted.Title.EndsWith("被停下了"), "Codex Interrupt uses 被停下了");
+Check(!Parse("codex", codexStop.Replace("Stop", "UserPromptSubmit"), out _, out var codexOther) && codexOther == "invalid-event", "Unrelated Codex hook events are discarded");
 
 var existingCursor = """
 {
@@ -114,15 +122,16 @@ var broken = "{ not json";
 Check(!DesktopHookConfigInstaller.TryMergeCursor(broken, script, out var brokenOut, out var brokenStatus) && brokenStatus == "invalid-existing" && brokenOut == broken, "Invalid Cursor hooks.json is left untouched");
 
 Check(DesktopHookConfigInstaller.TryMergeCodex(null, script, out var codexCreated, out var codexCreatedStatus) && codexCreatedStatus == "created", "Missing Codex hooks.json is created");
-Check(codexCreated.Contains("-Source codex") && !codexCreated.Contains("notify", StringComparison.OrdinalIgnoreCase), "Codex hooks.json only installs Stop and does not mention notify");
+Check(codexCreated.Contains("-Source codex") && codexCreated.Contains("Stop") && codexCreated.Contains("Interrupt") && !codexCreated.Contains("notify", StringComparison.OrdinalIgnoreCase), "Codex hooks.json installs Stop and Interrupt and does not mention notify");
 var existingCodex = """
 {"hooks":{"Stop":[{"hooks":[{"type":"command","command":"other.exe","timeout":10}]}],"UserPromptSubmit":[{"hooks":[{"type":"command","command":"keep.exe"}]}]}}
 """;
 Check(DesktopHookConfigInstaller.TryMergeCodex(existingCodex, script, out var codexMerged, out _) , "Existing Codex hooks.json can be merged");
 var codexNode = JsonNode.Parse(codexMerged)!.AsObject();
 Check(codexNode["hooks"]!["Stop"]!.AsArray().Count == 2, "Existing Codex Stop handlers are kept");
+Check(codexNode["hooks"]!["Interrupt"]!.AsArray().Count == 1 && DesktopHookConfigInstaller.IsOurCommand(codexNode["hooks"]!["Interrupt"]!.AsArray()[0]!["hooks"]!.AsArray()[0]!["command"]!.GetValue<string>()), "Codex Interrupt hook is added without rewriting other events");
 Check(codexNode["hooks"]!["UserPromptSubmit"]!.AsArray()[0]!["hooks"]!.AsArray()[0]!["command"]!.GetValue<string>() == "keep.exe", "Unrelated Codex hooks are preserved");
-Check(DesktopHookConfigInstaller.TryMergeCodex(codexMerged, script, out var codexAgain, out var codexAgainStatus) && codexAgainStatus == "unchanged", "A second Codex merge does not duplicate Stop");
+Check(DesktopHookConfigInstaller.TryMergeCodex(codexMerged, script, out var codexAgain, out var codexAgainStatus) && codexAgainStatus == "unchanged", "A second Codex merge does not duplicate Stop or Interrupt");
 
 Check(DesktopHookConfigInstaller.TryMergeGemini(null, script, out var geminiCreated, out var geminiCreatedStatus) && geminiCreatedStatus == "created", "Missing Gemini hooks.json is created");
 Check(geminiCreated.Contains("big-blue-fish-desktop-reminder") && geminiCreated.Contains("-Source gemini"), "Gemini hook uses a stable definition name");
@@ -159,9 +168,9 @@ Check(DesktopHookParser.SanitizeModelName("ok-model") == "ok-model", "Plain mode
 Check(DesktopHookParser.SanitizeModelName("a@b") is null && DesktopHookParser.SanitizeModelName("a/b") is null && DesktopHookParser.SanitizeModelName(@"C:\x") is null && DesktopHookParser.SanitizeModelName("transcript.json") is null, "Model names that look like emails, paths, or transcripts are dropped");
 Check(DesktopHookParser.SanitizeModelName(new string('m', 41))!.Length == 40, "Model names longer than 40 characters are truncated");
 var ended = DesktopHookParser.Build(DesktopHookSource.Codex, DesktopHookOutcome.Ended, "proj");
-Check(ended.Title == "Codex · proj 结束了" && ended.Message == "Codex 在图形界面里这一轮结束了。" && !ended.Title.Contains("已完成") && !ended.Message.Contains("已完成"), "Codex ended wording is not 已完成");
+Check(ended.Title == "Codex · proj 结束了" && ended.Message == "Codex 这一轮结束了。" && !ended.Title.Contains("已完成") && !ended.Message.Contains("已完成"), "Codex ended wording is not 已完成");
 var interrupted = DesktopHookParser.Build(DesktopHookSource.Codex, DesktopHookOutcome.Interrupted, null);
-Check(interrupted.Title == "Codex 被停下了" && interrupted.Message == "Codex 在图形界面里这一轮被停下了。" && interrupted.AnimationId == "点击回应-傲娇生气", "Interrupted title works without a project name");
+Check(interrupted.Title == "Codex 被停下了" && interrupted.Message == "Codex 这一轮被停下了。" && interrupted.AnimationId == "点击回应-傲娇生气", "Interrupted title works without a project name");
 
 var delivered = new System.Collections.Concurrent.ConcurrentBag<DesktopHookReminder>();
 using (var server = DesktopHookServer.Start(delivered.Add))
@@ -185,10 +194,12 @@ using (var server = DesktopHookServer.Start(delivered.Add))
     Check((int)ok.StatusCode == 204 && delivered.Count == 1 && delivered.Single().Source == DesktopHookSource.Gemini, "Loopback server accepts a confirmed Gemini desktop event");
     var denied = Post(server.Url, "wrong-token", Wrap("gemini", geminiDesktop));
     Check((int)denied.StatusCode == 401 && delivered.Count == 1, "Loopback server rejects a bad bearer token");
-    var skipped = Post(server.Url, server.Token, Wrap("cursor", cursorCompleted));
-    Check((int)skipped.StatusCode == 204 && delivered.Count == 1, "Unconfirmed Cursor events are discarded without failing the hook");
+    var cursorOk = Post(server.Url, server.Token, Wrap("cursor", cursorCompleted));
+    Check((int)cursorOk.StatusCode == 204 && delivered.Count == 2 && delivered.Any(item => item.Source == DesktopHookSource.Cursor && item.Outcome == DesktopHookOutcome.Completed), "Loopback server accepts a Cursor official hook event");
+    var codexOk = Post(server.Url, server.Token, Wrap("codex", codexStop));
+    Check((int)codexOk.StatusCode == 204 && delivered.Count == 3 && delivered.Any(item => item.Source == DesktopHookSource.Codex && item.Outcome == DesktopHookOutcome.Ended), "Loopback server accepts a Codex Stop event");
     var cli = Post(server.Url, server.Token, Wrap("gemini", geminiCli));
-    Check((int)cli.StatusCode == 204 && delivered.Count == 1, "Gemini CLI events are discarded by the receive socket");
+    Check((int)cli.StatusCode == 204 && delivered.Count == 3, "Gemini CLI events are discarded by the receive socket");
 }
 
 Console.WriteLine($"Desktop hook verification passed, {checks} checks.");

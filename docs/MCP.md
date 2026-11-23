@@ -256,7 +256,7 @@ Windows 位置字段是 `Left`、`Top`，Linux 为 `X`、`Y`；它们描述角�
 
 ## Windows 基础监工（2026-10-27）
 
-第一版依赖 Agent 主动调用 notify_task / ask_user，不拦截宿主原生审批。Windows 现已通过官方钩子自动提醒已确认的 Gemini / Antigravity 桌面任务循环结束（完全空闲且路径可区分桌面与命令行）；Cursor 和 Codex 的官方钩子虽会写入，但目前没有可确认桌面来源的字段，事件会丢弃，不会观察命令行输出。Linux 仍不自动监测原生任务。无需 DSH，无需内置模型，不额外调用模型。连接两边 MCP 后，可在各自 Agent 规则中约定：真正完成或失败时仍可调用 notify_task；有需要用户决定或填写的问题时调用 ask_user 并等待实际结果。
+第一版依赖 Agent 主动调用 notify_task / ask_user，不拦截宿主原生审批。Windows 现已通过官方钩子自动提醒任务结束：Gemini / Antigravity 只提醒已确认的桌面任务循环结束（完全空闲且路径可区分桌面与命令行）；Cursor 和 Codex 在官方钩子报任务结束时也会提醒，即使还不能区分桌面与命令行，因此命令行任务也可能弹出。不会观察命令行输出、日志或界面。Linux 仍不自动监测原生任务。无需 DSH，无需内置模型，不额外调用模型。连接两边 MCP 后，可在各自 Agent 规则中约定：真正完成或失败时仍可调用 notify_task；有需要用户决定或填写的问题时调用 ask_user 并等待实际结果。
 
 ```json
 {"name":"notify_task","arguments":{"title":"蓝色大肥鱼 · 聊天界面","message":"修改和相关测试已完成，请查看交付结果。","status":"completed"}}

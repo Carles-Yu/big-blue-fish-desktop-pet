@@ -203,11 +203,11 @@ say_next 使用普通自动说话的可见性、设置窗口、空闲区间及�
 
 ## 图形界面任务完成提醒
 
-Windows 标准版与安全版都会在启动时于 127.0.0.1 打开仅本机、仅当前用户的接收口，并把官方钩子脚本和令牌写到用户目录；退出时关闭接收口并删除 endpoint，桌宠未运行时钩子静默成功。合并写入 Cursor、Codex、Gemini / Antigravity 的用户级 hooks.json 时，只追加或更新大肥鱼自己的 Stop/stop 命令，不覆盖已有 Cursor 钩子条目，也不修改 Codex config.toml 中的 notify。Linux 不启用该功能。
+Windows 标准版与安全版都会在启动时于 127.0.0.1 打开仅本机、仅当前用户的接收口，并把官方钩子脚本和令牌写到用户目录；退出时关闭接收口并删除 endpoint，桌宠未运行时钩子静默成功。合并写入 Cursor、Codex、Gemini / Antigravity 的用户级 hooks.json 时，只追加或更新大肥鱼自己的 Stop/stop 命令，以及 Codex 的 Interrupt，不覆盖已有 Cursor 钩子条目，也不修改 Codex config.toml 中的 notify。Linux 不启用该功能。
 
-提醒复用气泡和托盘提示，不调用模型。只有能确认来自官方桌面任务循环结束的事件才会显示：Gemini / Antigravity 按官方路径区分桌面与命令行，并且只在 fullyIdle 为真时提醒；Cursor 与 Codex 的官方钩子目前没有可确认“来自桌面”的字段，无法确认时丢弃。Codex 桌面需要在 Settings → Hooks 中批准；若批准后仍无事件，标记为未接通，不改用其他办法。MCP notify_task 仍可供 Agent 主动通知。命令行 Agent 不接入。
+提醒复用气泡和托盘提示，不调用模型。Gemini / Antigravity 按官方路径区分桌面与命令行，并且只在 fullyIdle 为真时提醒，命令行任务会丢弃。Cursor 与 Codex 的官方钩子目前没有可确认“来自桌面”的字段，因此只要官方钩子报任务结束就会提醒：Cursor 的 completed / aborted / error 分别对应已完成、已取消、未能完成；Codex 的 Stop 说「结束了」并播放「工作状态-清点归档」，Interrupt 说「被停下了」并播放「点击回应-傲娇生气」。因此这两家的命令行任务也可能弹出提醒。Codex 桌面需要在 Settings → Hooks 中批准；若批准后仍无事件，标记为未接通，不改用其他办法。MCP notify_task 仍可供 Agent 主动通知。不会去看命令行窗口、日志或界面。
 
-提醒文案带工具名、项目名，以及必要时经清洗的模型名，不把对话原文、邮箱或 transcript 路径放进气泡或日志。动作按状态点播现成片段：做完用「工作状态-雀跃庆祝」，出错按 Id 点播「工作状态-垂头叹气冒汗」（该规则在 Disabled 池，不能靠随机抽取），取消用「点击回应-害羞惊讶」。若日后能确认桌面来源，Cursor 的 completed / aborted / error 分别对应已完成、已取消、未能完成；Codex 的 Stop 说「结束了」并播放「工作状态-清点归档」，Interrupt 说「被停下了」并播放「点击回应-傲娇生气」；未知原因和 max_steps 一类不得写成「已完成」。提线木偶模式开启时仍显示气泡和托盘，但不切换动作。目前仍只有 Gemini / Antigravity 桌面能确认并提醒，Cursor 与 Codex 在缺少官方桌面字段时继续丢弃。
+提醒文案带工具名、项目名，以及必要时经清洗的模型名，不把对话原文、邮箱或 transcript 路径放进气泡或日志。动作按状态点播现成片段：做完用「工作状态-雀跃庆祝」，出错按 Id 点播「工作状态-垂头叹气冒汗」（该规则在 Disabled 池，不能靠随机抽取），取消用「点击回应-害羞惊讶」。未知原因和 max_steps 一类不得写成「已完成」。提线木偶模式开启时仍显示气泡和托盘，但不切换动作。
 
 ## 提线木偶模式
 

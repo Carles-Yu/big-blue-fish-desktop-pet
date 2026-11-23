@@ -138,22 +138,33 @@ public static class DesktopHookParser
             return false;
         }
 
-        // Official Cursor hook fields do not distinguish the desktop app from the CLI.
-        // Do not infer this from process trees, log files, or unofficial properties.
-        _ = env;
-        _ = payload;
-        discardReason = "unconfirmed-desktop";
-        return false;
+        // Official Cursor hook fields still do not distinguish the desktop app from the CLI.
+        // Do not infer that from process trees, log files, or unofficial properties.
+        var project = FirstProjectName(payload, "workspace_roots");
+        if (project is null && env.TryGetValue("CURSOR_PROJECT_DIR", out var projectDir))
+            project = ProjectNameFromPath(projectDir);
+        reminder = Build(DesktopHookSource.Cursor, CursorOutcome(status), project);
+        discardReason = "";
+        return true;
     }
 
     static bool TryParseCodex(JsonObject payload, Dictionary<string, string?> env, out DesktopHookReminder? reminder, out string discardReason)
     {
         reminder = null;
-        // Official Codex Stop payloads have no documented desktop-vs-CLI discriminator.
         _ = env;
-        _ = payload;
-        discardReason = "unconfirmed-desktop";
-        return false;
+        // Official Codex payloads have no documented desktop-vs-CLI discriminator.
+        // Do not infer that from process trees, log files, or unofficial properties.
+        var eventName = ReadString(payload, "hook_event_name");
+        var key = (eventName ?? "").Trim().Replace('-', '_').ToLowerInvariant();
+        if (key is not ("stop" or "interrupt" or "user_interrupt" or "interrupted"))
+        {
+            discardReason = "invalid-event";
+            return false;
+        }
+
+        reminder = Build(DesktopHookSource.Codex, CodexOutcome(eventName), FirstProjectName(payload, "workspace_roots"));
+        discardReason = "";
+        return true;
     }
 
     public static DesktopHookOutcome GeminiOutcome(string? reason)
@@ -228,7 +239,7 @@ public static class DesktopHookParser
         if (title.Length > 120)
             title = title[..120];
         var model = SanitizeModelName(modelName);
-        var message = MessageFor(app, outcome);
+        var message = MessageFor(source, outcome);
         if (model != null)
             message += "使用的是 " + model + "。";
         return new DesktopHookReminder(source, outcome, title, message, projectName, AnimationIdFor(outcome), model);
@@ -251,15 +262,32 @@ public static class DesktopHookParser
         _ => "未能完成"
     };
 
-    public static string MessageFor(string app, DesktopHookOutcome outcome) => outcome switch
+    public static string MessageFor(DesktopHookSource source, DesktopHookOutcome outcome)
     {
-        DesktopHookOutcome.Failed => app + " 在图形界面里没能做完这一轮。",
-        DesktopHookOutcome.Cancelled => app + " 在图形界面里取消了这一轮。",
-        DesktopHookOutcome.Ended => app + " 在图形界面里这一轮结束了。",
-        DesktopHookOutcome.Interrupted => app + " 在图形界面里这一轮被停下了。",
-        DesktopHookOutcome.Completed => app + " 在图形界面里做完了这一轮。",
-        _ => app + " 在图形界面里没能做完这一轮。"
-    };
+        var app = AppName(source);
+        if (source is DesktopHookSource.Cursor or DesktopHookSource.Codex)
+        {
+            return outcome switch
+            {
+                DesktopHookOutcome.Failed => app + " 这一轮没能做完。",
+                DesktopHookOutcome.Cancelled => app + " 这一轮取消了。",
+                DesktopHookOutcome.Ended => app + " 这一轮结束了。",
+                DesktopHookOutcome.Interrupted => app + " 这一轮被停下了。",
+                DesktopHookOutcome.Completed => app + " 这一轮做完了。",
+                _ => app + " 这一轮没能做完。"
+            };
+        }
+
+        return outcome switch
+        {
+            DesktopHookOutcome.Failed => app + " 在图形界面里没能做完这一轮。",
+            DesktopHookOutcome.Cancelled => app + " 在图形界面里取消了这一轮。",
+            DesktopHookOutcome.Ended => app + " 在图形界面里这一轮结束了。",
+            DesktopHookOutcome.Interrupted => app + " 在图形界面里这一轮被停下了。",
+            DesktopHookOutcome.Completed => app + " 在图形界面里做完了这一轮。",
+            _ => app + " 在图形界面里没能做完这一轮。"
+        };
+    }
 
     public static string AnimationIdFor(DesktopHookOutcome outcome) => outcome switch
     {
