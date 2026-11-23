@@ -31,7 +31,8 @@ var geminiDesktop = """
 Check(Parse("gemini", geminiDesktop, out var geminiOk, out var geminiReason) && geminiReason == "", "Gemini desktop idle payload is accepted");
 Check(geminiOk is { Source: DesktopHookSource.Gemini, Outcome: DesktopHookOutcome.Completed, ProjectName: "big-blue-fish-desktop-pet" }, "Gemini desktop reminder uses the workspace name");
 Check(geminiOk!.Title == "Gemini · big-blue-fish-desktop-pet 已完成", "Gemini completed title includes the project");
-Check(geminiOk.Message == "图形界面里的这一轮任务已经结束。", "Gemini completed message stays generic");
+Check(geminiOk.Message == "Gemini 在图形界面里做完了这一轮。使用的是 gemini-3.6-flash-medium。", "Gemini completed message names the tool and model, not the transcript");
+Check(geminiOk.AnimationId == "工作状态-雀跃庆祝" && geminiOk.ModelName == "gemini-3.6-flash-medium", "Gemini completed reminder plays the celebration clip and keeps a sanitized model name");
 Check(!geminiOk.Title.Contains("secret", StringComparison.OrdinalIgnoreCase) && !geminiOk.Message.Contains("secret", StringComparison.OrdinalIgnoreCase), "Gemini reminder does not include user input");
 Check(!geminiOk.Title.Contains("Administrator") && !geminiOk.Message.Contains("transcript", StringComparison.OrdinalIgnoreCase), "Gemini reminder does not include transcript paths");
 
@@ -47,6 +48,7 @@ Check(!Parse("gemini", """{"terminationReason":"model_stop"}""", out _, out var 
 
 var geminiError = geminiDesktop.Replace("\"terminationReason\": \"model_stop\"", "\"terminationReason\": \"error\"");
 Check(Parse("gemini", geminiError, out var geminiFailed, out _) && geminiFailed is { Outcome: DesktopHookOutcome.Failed, Title: "Gemini · big-blue-fish-desktop-pet 未能完成" }, "Gemini desktop error is a failure reminder");
+Check(geminiFailed!.AnimationId == "工作状态-垂头叹气冒汗" && geminiFailed.Message == "Gemini 在图形界面里没能做完这一轮。使用的是 gemini-3.6-flash-medium。", "Gemini failure reminder plays the sigh clip by Id and is not worded as 已完成");
 
 var lookalike = geminiDesktop.Replace(
     "C:/Users/Administrator/.gemini/antigravity/brain/ec33ebf9-0cba-4100-8142-c61503f6c587/.system_generated/logs/transcript.jsonl",
@@ -80,7 +82,8 @@ var cursorEnv = new Dictionary<string, string?>
 Check(!Parse("cursor", cursorCompleted, out _, out var cursorEnvReason, cursorEnv) && cursorEnvReason == "unconfirmed-desktop", "Cursor official environment variables are not used as a desktop discriminator");
 
 var built = DesktopHookParser.Build(DesktopHookSource.Cursor, DesktopHookOutcome.Cancelled, "big-blue-fish-desktop-pet");
-Check(built.Title == "Cursor · big-blue-fish-desktop-pet 已取消" && built.Message == "图形界面里的这一轮任务已取消。", "Cancelled wording is not treated as a failure");
+Check(built.Title == "Cursor · big-blue-fish-desktop-pet 已取消" && built.Message == "Cursor 在图形界面里取消了这一轮。", "Cancelled wording is not treated as a failure");
+Check(built.AnimationId == "点击回应-害羞惊讶", "Cancelled reminder plays the shy-surprise clip");
 Check(!built.Title.Contains('@') && !built.Message.Contains("hidden"), "Built reminders never include an email");
 
 var codexStop = """
@@ -142,6 +145,23 @@ var geminiMax = geminiDesktop.Replace("\"terminationReason\": \"model_stop\"", "
 Check(Parse("gemini", geminiMax, out var maxInv, out _) && maxInv is { Outcome: DesktopHookOutcome.Failed }, "Gemini MAX_INVOCATIONS is not treated as completed");
 Check(DesktopHookParser.GeminiOutcome("max_steps_exceeded") == DesktopHookOutcome.Failed, "Public max_steps_exceeded alias is a failure");
 Check(DesktopHookParser.GeminiOutcome("EXECUTOR_TERMINATION_REASON_NO_TOOL_CALL") == DesktopHookOutcome.Completed, "Prefixed official reason names are normalized");
+Check(canceled!.AnimationId == "点击回应-害羞惊讶" && !canceled.Title.Contains("已完成"), "Gemini cancellation plays the shy-surprise clip and is not worded as 已完成");
+Check(DesktopHookParser.CursorOutcome("completed") == DesktopHookOutcome.Completed, "Cursor completed maps to completed wording");
+Check(DesktopHookParser.CursorOutcome("aborted") == DesktopHookOutcome.Cancelled, "Cursor aborted maps to cancelled wording");
+Check(DesktopHookParser.CursorOutcome("error") == DesktopHookOutcome.Failed, "Cursor error maps to failed wording");
+Check(DesktopHookParser.CodexOutcome("Stop") == DesktopHookOutcome.Ended && DesktopHookParser.ResultPhrase(DesktopHookOutcome.Ended) == "结束了", "Codex Stop says 结束了, not 已完成");
+Check(DesktopHookParser.CodexOutcome("Interrupt") == DesktopHookOutcome.Interrupted && DesktopHookParser.ResultPhrase(DesktopHookOutcome.Interrupted) == "被停下了", "Codex Interrupt says 被停下了");
+Check(DesktopHookParser.CodexOutcome("unknown") == DesktopHookOutcome.Ended, "Unknown Codex hook names do not fall through to 已完成");
+Check(DesktopHookParser.AnimationIdFor(DesktopHookOutcome.Failed) == "工作状态-垂头叹气冒汗", "Failure animation is the disabled sigh clip, selected by Id");
+Check(DesktopHookParser.AnimationIdFor(DesktopHookOutcome.Ended) == "工作状态-清点归档", "Ended animation is the archive clip");
+Check(DesktopHookParser.AnimationIdFor(DesktopHookOutcome.Interrupted) == "点击回应-傲娇生气", "Interrupted animation is the tsundere clip");
+Check(DesktopHookParser.SanitizeModelName("ok-model") == "ok-model", "Plain model names are kept");
+Check(DesktopHookParser.SanitizeModelName("a@b") is null && DesktopHookParser.SanitizeModelName("a/b") is null && DesktopHookParser.SanitizeModelName(@"C:\x") is null && DesktopHookParser.SanitizeModelName("transcript.json") is null, "Model names that look like emails, paths, or transcripts are dropped");
+Check(DesktopHookParser.SanitizeModelName(new string('m', 41))!.Length == 40, "Model names longer than 40 characters are truncated");
+var ended = DesktopHookParser.Build(DesktopHookSource.Codex, DesktopHookOutcome.Ended, "proj");
+Check(ended.Title == "Codex · proj 结束了" && ended.Message == "Codex 在图形界面里这一轮结束了。" && !ended.Title.Contains("已完成") && !ended.Message.Contains("已完成"), "Codex ended wording is not 已完成");
+var interrupted = DesktopHookParser.Build(DesktopHookSource.Codex, DesktopHookOutcome.Interrupted, null);
+Check(interrupted.Title == "Codex 被停下了" && interrupted.Message == "Codex 在图形界面里这一轮被停下了。" && interrupted.AnimationId == "点击回应-傲娇生气", "Interrupted title works without a project name");
 
 var delivered = new System.Collections.Concurrent.ConcurrentBag<DesktopHookReminder>();
 using (var server = DesktopHookServer.Start(delivered.Add))

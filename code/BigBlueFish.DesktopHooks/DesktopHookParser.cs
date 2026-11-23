@@ -14,7 +14,9 @@ public enum DesktopHookOutcome
 {
     Completed,
     Failed,
-    Cancelled
+    Cancelled,
+    Ended,
+    Interrupted
 }
 
 public sealed record DesktopHookReminder(
@@ -22,7 +24,9 @@ public sealed record DesktopHookReminder(
     DesktopHookOutcome Outcome,
     string Title,
     string Message,
-    string? ProjectName);
+    string? ProjectName,
+    string AnimationId,
+    string? ModelName = null);
 
 public static class DesktopHookParser
 {
@@ -118,7 +122,7 @@ public static class DesktopHookParser
             return false;
         }
 
-        reminder = Build(DesktopHookSource.Gemini, GeminiOutcome(ReadString(payload, "terminationReason")), FirstProjectName(payload, "workspacePaths"));
+        reminder = Build(DesktopHookSource.Gemini, GeminiOutcome(ReadString(payload, "terminationReason")), FirstProjectName(payload, "workspacePaths"), ReadString(payload, "modelName"));
         discardReason = "";
         return true;
     }
@@ -216,30 +220,84 @@ public static class DesktopHookParser
         }
     }
 
-    public static DesktopHookReminder Build(DesktopHookSource source, DesktopHookOutcome outcome, string? projectName)
+    public static DesktopHookReminder Build(DesktopHookSource source, DesktopHookOutcome outcome, string? projectName, string? modelName = null)
     {
-        var app = source switch
-        {
-            DesktopHookSource.Cursor => "Cursor",
-            DesktopHookSource.Codex => "Codex",
-            _ => "Gemini"
-        };
-        var result = outcome switch
-        {
-            DesktopHookOutcome.Failed => "未能完成",
-            DesktopHookOutcome.Cancelled => "已取消",
-            _ => "已完成"
-        };
+        var app = AppName(source);
+        var result = ResultPhrase(outcome);
         var title = string.IsNullOrWhiteSpace(projectName) ? $"{app} {result}" : $"{app} · {projectName} {result}";
         if (title.Length > 120)
             title = title[..120];
-        var message = outcome switch
-        {
-            DesktopHookOutcome.Failed => "图形界面里的这一轮任务没能完成。",
-            DesktopHookOutcome.Cancelled => "图形界面里的这一轮任务已取消。",
-            _ => "图形界面里的这一轮任务已经结束。"
-        };
-        return new DesktopHookReminder(source, outcome, title, message, projectName);
+        var model = SanitizeModelName(modelName);
+        var message = MessageFor(app, outcome);
+        if (model != null)
+            message += "使用的是 " + model + "。";
+        return new DesktopHookReminder(source, outcome, title, message, projectName, AnimationIdFor(outcome), model);
+    }
+
+    public static string AppName(DesktopHookSource source) => source switch
+    {
+        DesktopHookSource.Cursor => "Cursor",
+        DesktopHookSource.Codex => "Codex",
+        _ => "Gemini"
+    };
+
+    public static string ResultPhrase(DesktopHookOutcome outcome) => outcome switch
+    {
+        DesktopHookOutcome.Failed => "未能完成",
+        DesktopHookOutcome.Cancelled => "已取消",
+        DesktopHookOutcome.Ended => "结束了",
+        DesktopHookOutcome.Interrupted => "被停下了",
+        DesktopHookOutcome.Completed => "已完成",
+        _ => "未能完成"
+    };
+
+    public static string MessageFor(string app, DesktopHookOutcome outcome) => outcome switch
+    {
+        DesktopHookOutcome.Failed => app + " 在图形界面里没能做完这一轮。",
+        DesktopHookOutcome.Cancelled => app + " 在图形界面里取消了这一轮。",
+        DesktopHookOutcome.Ended => app + " 在图形界面里这一轮结束了。",
+        DesktopHookOutcome.Interrupted => app + " 在图形界面里这一轮被停下了。",
+        DesktopHookOutcome.Completed => app + " 在图形界面里做完了这一轮。",
+        _ => app + " 在图形界面里没能做完这一轮。"
+    };
+
+    public static string AnimationIdFor(DesktopHookOutcome outcome) => outcome switch
+    {
+        DesktopHookOutcome.Completed => "工作状态-雀跃庆祝",
+        DesktopHookOutcome.Failed => "工作状态-垂头叹气冒汗",
+        DesktopHookOutcome.Cancelled => "点击回应-害羞惊讶",
+        DesktopHookOutcome.Ended => "工作状态-清点归档",
+        DesktopHookOutcome.Interrupted => "点击回应-傲娇生气",
+        _ => "工作状态-垂头叹气冒汗"
+    };
+
+    public static DesktopHookOutcome CursorOutcome(string? status)
+    {
+        var key = status?.Trim().ToLowerInvariant();
+        if (key == "completed")
+            return DesktopHookOutcome.Completed;
+        if (key == "aborted")
+            return DesktopHookOutcome.Cancelled;
+        return DesktopHookOutcome.Failed;
+    }
+
+    public static DesktopHookOutcome CodexOutcome(string? hookEventName)
+    {
+        var key = (hookEventName ?? "").Trim().Replace('-', '_').ToLowerInvariant();
+        if (key is "interrupt" or "user_interrupt" or "interrupted")
+            return DesktopHookOutcome.Interrupted;
+        return DesktopHookOutcome.Ended;
+    }
+
+    public static string? SanitizeModelName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return null;
+        var text = name.Trim();
+        if (text.Contains('@') || text.Contains('/') || text.Contains('\\') ||
+            text.Contains("transcript", StringComparison.OrdinalIgnoreCase))
+            return null;
+        return text.Length > 40 ? text[..40] : text;
     }
 
     static bool Fail(string reason, out DesktopHookReminder? reminder, out string discardReason)

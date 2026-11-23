@@ -109,6 +109,16 @@ public partial class MainWindow
             reminder.Title.Length > 63 ? reminder.Title[..63] : reminder.Title,
             reminder.Message.Length > 240 ? reminder.Message[..240] + "…" : reminder.Message,
             reminder.Outcome == DesktopHookOutcome.Failed ? System.Windows.Forms.ToolTipIcon.Warning : System.Windows.Forms.ToolTipIcon.Info);
+        if (!PuppetActive && !string.IsNullOrWhiteSpace(reminder.AnimationId))
+        {
+            try
+            {
+                PlayAnimation(animationPolicy.Find(reminder.AnimationId), "External");
+            }
+            catch
+            {
+            }
+        }
     }
 
     private void InstallDesktopHookConfigs(string scriptPath)
@@ -165,6 +175,8 @@ public partial class MainWindow
                 "Cursor 与 Codex 的官方钩子目前没有可确认“来自桌面”的字段，因此这两家的事件会先丢弃，以免和命令行任务混在一起。Gemini / Antigravity 可按官方路径区分桌面与命令行，并且只在完全空闲时提醒。" +
                 Environment.NewLine + Environment.NewLine +
                 "Codex 桌面需要在 Settings → Hooks 中批准后才会触发；若批准后仍没有事件，会标记为未接通，不会改用其他办法。已有的 MCP notify_task 仍可主动通知。" +
+                Environment.NewLine + Environment.NewLine +
+                "提醒文案会带上工具名、项目名，以及必要时的模型名，不会把对话原文放进气泡。动作按状态点播现成片段：做完用「工作状态-雀跃庆祝」，出错按 Id 点播「工作状态-垂头叹气冒汗」，取消用「点击回应-害羞惊讶」，结束了用「工作状态-清点归档」，被停下了用「点击回应-傲娇生气」。" +
                 Environment.NewLine + Environment.NewLine +
                 "接收口：" + desktopHookStatus + Environment.NewLine +
                 "Cursor：" + cursorHookStatus + Environment.NewLine +
