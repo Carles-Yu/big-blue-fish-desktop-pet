@@ -44,6 +44,7 @@ internal sealed class CompanionPreferences
     public bool ForegroundEnabled { get; set; } = true;
     public bool StopModelOnBattery { get; set; } = true;
     public bool HideOnFullscreen { get; set; } = true;
+    public bool ShowTaskCardsOnFullscreen { get; set; }
     public bool CheckUpdatesOnStartup { get; set; } = true;
     public bool McpEnabled { get; set; }
     public bool PuppetMode { get; set; }

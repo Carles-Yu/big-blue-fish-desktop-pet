@@ -256,13 +256,13 @@ Windows 位置字段是 `Left`、`Top`，Linux 为 `X`、`Y`；它们描述角�
 
 ## Windows 基础监工（2026-10-27）
 
-第一版依赖 Agent 主动调用 notify_task / ask_user，不拦截宿主原生审批。Windows 现已通过官方钩子自动提醒任务结束：Gemini / Antigravity 只提醒已确认的桌面任务循环结束（完全空闲且路径可区分桌面与命令行）；Cursor 和 Codex 在官方钩子报任务结束时也会提醒，即使还不能区分桌面与命令行，因此命令行任务也可能弹出。不会观察命令行输出、日志或界面。Linux 仍不自动监测原生任务。无需 DSH，无需内置模型，不额外调用模型。连接两边 MCP 后，可在各自 Agent 规则中约定：真正完成或失败时仍可调用 notify_task；有需要用户决定或填写的问题时调用 ask_user 并等待实际结果。
+第一版依赖 Agent 主动调用 notify_task / ask_user，不拦截宿主原生审批。Windows 现已通过官方钩子自动提醒任务结束：Gemini / Antigravity 只提醒已确认的桌面任务循环结束（完全空闲且路径可区分桌面与命令行）；Cursor 和 Codex 在官方钩子报任务结束时也会提醒，即使还不能区分桌面与命令行，因此命令行任务也可能弹出。这些提醒和 MCP notify_task 都会进入左上角可堆积、点击即消的通知卡片队列，而不再占用鱼鱼身边的单条气泡。不会观察命令行输出、日志或界面。Linux 仍不自动监测原生任务。无需 DSH，无需内置模型，不额外调用模型。连接两边 MCP 后，可在各自 Agent 规则中约定：真正完成或失败时仍可调用 notify_task；有需要用户决定或填写的问题时调用 ask_user 并等待实际结果。
 
 ```json
 {"name":"notify_task","arguments":{"title":"蓝色大肥鱼 · 聊天界面","message":"修改和相关测试已完成，请查看交付结果。","status":"completed"}}
 ```
 
-status 仅 completed / failed；title 1–120 字符，message 1–2000。显示气泡、请求 Windows 托盘通知；托盘标题和正文受系统长度限制会截短，气泡保留完整文字。accepted=true,userRead=false 只表示提交提醒，不表示用户已读；Windows 通知设置可能阻止通知。
+status 仅 completed / failed；title 1–120 字符，message 1–2000。加入左上角任务通知卡片队列（工具名记为「任务」，项目取 title，状态为已完成或未能完成），并请求 Windows 托盘通知；托盘标题和正文受系统长度限制会截短。长说明只出现在托盘，不写进卡片。accepted=true,userRead=false 只表示提交提醒，不表示用户已读；Windows 通知设置可能阻止通知。
 
 ```json
 {"name":"ask_user","arguments":{"title":"聊天界面 · 需要你决定","question":"发送按钮放在哪里？","options":["右下角","输入框右侧"],"timeout_seconds":300}}

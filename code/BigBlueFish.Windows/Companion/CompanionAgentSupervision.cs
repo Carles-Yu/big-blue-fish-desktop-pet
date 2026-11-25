@@ -24,8 +24,8 @@ public partial class MainWindow
         var message = ControlTools.RequiredText(args, "message", 2000);
         var status = ControlTools.RequiredText(args, "status", 20);
         if (status is not ("completed" or "failed")) throw new ArgumentException("status 必须为 completed 或 failed。");
-        ShowMcpSpeech($"{title}\n{(status == "completed" ? "已完成" : "未能完成")}：{message}");
-        agentNotificationClick = RestoreCompanion;
+        var phrase = status == "completed" ? "已完成" : "未能完成";
+        EnqueueTaskNotice("任务", title, phrase);
         notifyIcon.ShowBalloonTip(10000, title.Length > 63 ? title[..63] : title, message.Length > 240 ? message[..240] + "…" : message,
             status == "completed" ? System.Windows.Forms.ToolTipIcon.Info : System.Windows.Forms.ToolTipIcon.Warning);
         return ControlTools.Text(new { accepted = true, status, userRead = false });

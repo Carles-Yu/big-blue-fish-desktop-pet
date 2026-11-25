@@ -193,6 +193,7 @@ public partial class MainWindow
         {
             InstallCompanionHook();
             StartDesktopHookListener();
+            StartTaskNoticeOverlay();
             await LoadCompanionAnimations();
             if (preferences.CheckUpdatesOnStartup && !App.Args.Contains("--test-mode"))
             {
@@ -676,6 +677,7 @@ public partial class MainWindow
         }
 
         if (videoPlayer != null) videoPlayer.Paused = !exitAnimation && (hiddenByUser || fullscreenHidden);
+        SyncTaskNoticeOverlay();
         if (exitAnimation || hiddenByUser || fullscreenHidden || !companionReady || dragging)
             return;
         if (bubble.Visibility == Visibility.Visible && now > bubbleUntil)
@@ -840,6 +842,7 @@ public partial class MainWindow
             return;
         companionClosed = true;
         StopDesktopHookListener();
+        StopTaskNoticeOverlay();
         modelInstaller?.RequestClose();
         updateWindow?.RequestClose();
         StopMcp();

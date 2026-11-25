@@ -202,4 +202,23 @@ using (var server = DesktopHookServer.Start(delivered.Add))
     Check((int)cli.StatusCode == 204 && delivered.Count == 3, "Gemini CLI events are discarded by the receive socket");
 }
 
+
+var notices = new TaskNoticeQueue();
+var first = notices.Enqueue("Cursor", "alpha", "已完成");
+var second = notices.Enqueue("Codex", "beta", "结束了");
+Check(notices.Items.Count == 2 && notices.Items[0].Id == second.Id && notices.Items[1].Id == first.Id, "Newest task notice is stacked on top");
+Check(notices.Visible.Count == 2 && notices.Visible[0].Tool == "Codex" && notices.Visible[0].ProjectName == "beta" && notices.Visible[0].Status == "结束了", "Visible cards show tool, project, and status");
+Check(notices.Dismiss(second.Id) && notices.Items.Count == 1 && notices.Items[0].Id == first.Id && !notices.Dismiss("missing"), "Clicking a card dismisses only that card");
+var bare = notices.Enqueue("Gemini", "  ", "已取消");
+Check(bare.ProjectName is null, "Blank project names are omitted from the card");
+Check(notices.Dismiss(bare.Id) && notices.Items.Count == 1 && notices.Items[0].Id == first.Id, "A blank-project card can be dismissed on its own");
+for (var i = 0; i < 8; i++)
+    notices.Enqueue("Cursor", "p" + i, "已完成");
+Check(notices.Items.Count == 9 && notices.Visible.Count == 8 && notices.Visible[0].ProjectName == "p7" && notices.Items[8].Id == first.Id, "Only eight cards are shown, keeping older ones collapsed");
+notices.Dismiss(notices.Visible[0].Id);
+Check(notices.Visible.Count == 8 && notices.Visible[7].Id == first.Id, "Dismissing a visible card reveals the oldest collapsed one");
+Check(TaskNoticeQueue.ShouldShowOverlay(false, false) && TaskNoticeQueue.ShouldShowOverlay(false, true), "Cards show when no other app is fullscreen");
+Check(!TaskNoticeQueue.ShouldShowOverlay(true, false), "Cards are hidden during fullscreen unless the option is on");
+Check(TaskNoticeQueue.ShouldShowOverlay(true, true), "Cards can stay visible during fullscreen when the option is on");
+
 Console.WriteLine($"Desktop hook verification passed, {checks} checks.");

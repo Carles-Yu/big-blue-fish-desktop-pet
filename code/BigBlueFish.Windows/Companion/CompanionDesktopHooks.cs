@@ -21,6 +21,8 @@ public partial class MainWindow
     private string cursorHookStatus = "未写入";
     private string codexHookStatus = "未写入";
     private string geminiHookStatus = "未写入";
+    private readonly TaskNoticeQueue taskNoticeQueue = new();
+    private CompanionTaskNoticeOverlay? taskNoticeOverlay;
 
     private void StartDesktopHookListener()
     {
@@ -90,20 +92,35 @@ public partial class MainWindow
             desktopHookStatus = "已停止";
     }
 
+    private void StartTaskNoticeOverlay()
+    {
+        if (taskNoticeOverlay != null || companionClosed)
+            return;
+        taskNoticeOverlay = new CompanionTaskNoticeOverlay(taskNoticeQueue, () => preferences.ShowTaskCardsOnFullscreen);
+    }
+
+    private void StopTaskNoticeOverlay()
+    {
+        try { taskNoticeOverlay?.CloseOverlay(); } catch { }
+        taskNoticeOverlay = null;
+    }
+
+    private void SyncTaskNoticeOverlay() => taskNoticeOverlay?.Sync();
+
+    private void EnqueueTaskNotice(string tool, string? projectName, string status)
+    {
+        if (companionClosed || exitAnimation)
+            return;
+        StartTaskNoticeOverlay();
+        taskNoticeQueue.Enqueue(tool, projectName, status);
+        SyncTaskNoticeOverlay();
+    }
+
     private void ShowDesktopHookReminder(DesktopHookReminder reminder)
     {
         if (companionClosed || exitAnimation)
             return;
-        speechRequestVersion++;
-        brain.CancelGeneration();
-        EndModelSpeech();
-        EndGreetingNotice();
-        automaticBubble = false;
-        externalBubble = true;
-        bubbleIsModelReply = false;
-        bubbleUntil = DateTime.MaxValue;
-        speech.Show(reminder.Title + "\n" + reminder.Message, true);
-        agentNotificationClick = RestoreCompanion;
+        EnqueueTaskNotice(DesktopHookParser.AppName(reminder.Source), reminder.ProjectName, DesktopHookParser.ResultPhrase(reminder.Outcome));
         notifyIcon?.ShowBalloonTip(
             10000,
             reminder.Title.Length > 63 ? reminder.Title[..63] : reminder.Title,
@@ -174,9 +191,11 @@ public partial class MainWindow
                 Environment.NewLine + Environment.NewLine +
                 "Gemini / Antigravity 可按官方路径区分桌面与命令行，并且只在完全空闲时提醒，命令行任务会丢弃。Cursor 与 Codex 的官方钩子还不能区分桌面和命令行，因此只要官方钩子报任务结束就会提醒，命令行里的任务也可能弹出。" +
                 Environment.NewLine + Environment.NewLine +
-                "Codex 桌面需要在 Settings → Hooks 中批准后才会触发；若批准后仍没有事件，会标记为未接通，不会改用其他办法。已有的 MCP notify_task 仍可主动通知。" +
+                "任务结束提醒会在主显示器工作区左上角排成可堆积的小卡片，写明工具、项目和状态，最新的在最上面；点一张只消这一张，不会自动消失。同屏最多 8 张，更早的先收起，点掉前面的之后还会再出来。安静时段仍然出卡。MCP notify_task 也走同一条队列。任务状态不再写进鱼鱼身边的气泡，避免被后一条挤掉。" +
                 Environment.NewLine + Environment.NewLine +
-                "提醒文案会带上工具名、项目名，以及必要时的模型名，不会把对话原文放进气泡。动作按状态点播现成片段：做完用「工作状态-雀跃庆祝」，出错按 Id 点播「工作状态-垂头叹气冒汗」，取消用「点击回应-害羞惊讶」，结束了用「工作状态-清点归档」，被停下了用「点击回应-傲娇生气」。" +
+                "Codex 桌面需要在 Settings → Hooks 中批准后才会触发；若批准后仍没有事件，会标记为未接通，不会改用其他办法。" +
+                Environment.NewLine + Environment.NewLine +
+                "提醒文案会带上工具名、项目名，以及必要时的模型名，不会把对话原文放进卡片。动作按状态点播现成片段：做完用「工作状态-雀跃庆祝」，出错按 Id 点播「工作状态-垂头叹气冒汗」，取消用「点击回应-害羞惊讶」，结束了用「工作状态-清点归档」，被停下了用「点击回应-傲娇生气」。" +
                 Environment.NewLine + Environment.NewLine +
                 "接收口：" + desktopHookStatus + Environment.NewLine +
                 "Cursor：" + cursorHookStatus + Environment.NewLine +
@@ -185,6 +204,19 @@ public partial class MainWindow
             Foreground = Brushes.SlateGray,
             TextWrapping = TextWrapping.Wrap
         });
+        var fullscreenCards = new CheckBox
+        {
+            Content = "其他应用全屏时显示通知卡片",
+            IsChecked = preferences.ShowTaskCardsOnFullscreen,
+            Margin = new Thickness(0, 8, 0, 0)
+        };
+        fullscreenCards.Click += (_, _) =>
+        {
+            preferences.ShowTaskCardsOnFullscreen = fullscreenCards.IsChecked == true;
+            SaveCompanion();
+            SyncTaskNoticeOverlay();
+        };
+        panel.Children.Add(fullscreenCards);
     }
 
     private delegate bool TryMergeDesktopHook(string? existingJson, string scriptPath, out string updatedJson, out string status);
